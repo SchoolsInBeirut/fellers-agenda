@@ -892,8 +892,8 @@ test("pushHookPath follows the platform, and config overrides both", () => {
 test("relayMfaNumber writes the file first and fires every channel it has", async () => {
   await withTempRepo(async ({ dir, data }) => {
     const spawned = [];
-    const spawnFn = (cmd, args) => {
-      spawned.push({ cmd, args });
+    const spawnFn = (cmd, args, opts) => {
+      spawned.push({ cmd, args, opts });
       return { unref() {} };
     };
     const now = local(2, 14);
@@ -909,19 +909,22 @@ test("relayMfaNumber writes the file first and fires every channel it has", asyn
     assert.equal(rec.expiresAboutAt, zulu(new Date(now.getTime() + MFA_TTL_SEC * 1000)));
     assert.match(rec.message, /enter 42 in your authenticator app/);
 
-    // The on-screen alert must be detached, or it would hold the login open.
+    // With no push hook on disk, only the on-screen alert spawns. The desktop
+    // popup is a NON-network channel and stays detached, or it would hold the
+    // login open past the ninety-second window.
     assert.equal(spawned.length, 1);
     assert.equal(spawned[0].cmd, "powershell.exe");
+    assert.equal(spawned[0].opts.detached, true);
   });
 });
 
-test("relayMfaNumber runs the push hook when the user has provided one", async () => {
+test("relayMfaNumber runs a POSIX push hook directly and NEVER detached (FIX 2)", async () => {
   await withTempRepo(async ({ dir, data }) => {
     const hook = join(data, "push-hook.sh");
     writeFileSync(hook, "#!/bin/sh\n");
     const spawned = [];
-    const spawnFn = (cmd, args) => {
-      spawned.push({ cmd, args });
+    const spawnFn = (cmd, args, opts) => {
+      spawned.push({ cmd, args, opts });
       return { unref() {} };
     };
     const got = relayMfaNumber("7", { dir: data, root: dir, now: local(2, 14), spawnFn, platform: "linux", log: () => {} });
@@ -930,6 +933,39 @@ test("relayMfaNumber runs the push hook when the user has provided one", async (
     assert.ok(hookCall, "the hook was not invoked");
     assert.equal(hookCall.args[0], mfaMessage("7"));
     assert.equal(hookCall.args[1], "7");
+    // A POSIX shell hook is spawned directly - never wrapped in cmd.exe...
+    assert.notEqual(hookCall.cmd, "cmd.exe");
+    // ...and, crucially, a network push child must NOT be detached: a detached,
+    // console-less child is reaped before curl finishes its write, so the push is
+    // silently lost. Fire-and-forget is stdio:"ignore" + unref, never `detached`.
+    assert.notEqual(hookCall.opts.detached, true);
+    assert.equal(hookCall.opts.stdio, "ignore");
+  });
+});
+
+test("relayMfaNumber invokes a Windows .cmd push hook THROUGH cmd.exe, undetached (FIX 1)", async () => {
+  await withTempRepo(async ({ dir, data }) => {
+    // A .cmd/.bat cannot be spawned directly on modern Node - spawn("x.cmd", ...)
+    // throws EINVAL (the CVE-2024-27980 hardening). It must go through cmd.exe.
+    const hook = join(data, "push-hook.cmd");
+    writeFileSync(hook, "@echo off\r\n");
+    const spawned = [];
+    const spawnFn = (cmd, args, opts) => {
+      spawned.push({ cmd, args, opts });
+      return { unref() {} };
+    };
+    const got = relayMfaNumber("42", { dir: data, root: dir, now: local(2, 14), spawnFn, platform: "win32", log: () => {} });
+    assert.ok(got.delivered.includes("push-hook"));
+
+    const hookCall = spawned.find((c) => c.cmd === "cmd.exe");
+    assert.ok(hookCall, "a .cmd hook must be spawned through cmd.exe, never directly");
+    assert.deepEqual(hookCall.args, ["/d", "/c", hook, mfaMessage("42"), "42"]);
+    // Never detached - see FIX 2 - and hidden, fire-and-forget.
+    assert.notEqual(hookCall.opts.detached, true);
+    assert.equal(hookCall.opts.stdio, "ignore");
+    assert.equal(hookCall.opts.windowsHide, true);
+    // The raw .cmd path must never itself be the spawn command (that is the EINVAL).
+    assert.equal(spawned.some((c) => c.cmd === hook), false);
   });
 });
 

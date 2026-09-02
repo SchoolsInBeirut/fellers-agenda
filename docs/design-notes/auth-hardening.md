@@ -194,14 +194,20 @@ that work, and each of them is defended by a test.
    `MFA-NUMBER: <n>` on the first sight of it. It is anchored to **strictly 1-3
    digits**: relaying a *wrong* number is worse than relaying none, because the
    user types it, so any other text in that element is discarded.
-2. **Streaming, never buffering.** The lane reads the login child's output line
-   by line as it arrives and calls its relay on the very line carrying the
-   digits. This is not a style preference. A buffered read hands you the number
-   when the child exits, which is minutes after it stopped working — the same as
-   not delivering it. There is a test that runs the real reader against a real
-   child and asserts the number reached the relay **more than 800 ms before the
-   child exited**; if anyone simplifies it back to a buffered call, that test
-   fails.
+2. **Streaming, never buffering — on both sides of the seam.**
+   `scripts/reauth.mjs` wraps the login child and forwards each chunk of its
+   output to its own stdout the instant it arrives (`streamCollector`); then
+   `src/auth-retry.mjs` reads that stdout line by line and calls its relay on the
+   very line carrying the digits. This is not a style preference. If *either* side
+   buffers — the wrapper flushing only to the transcript at exit, or the lane
+   waiting for the child to close — you get the number minutes after it stopped
+   working, which is the same as not delivering it. (The wrapper buffering its
+   output was a real production failure: every cold login timed out at "token
+   interception" with the number stranded in a string.) Two tests defend this:
+   one drives the real reader against a real child and asserts the number reached
+   the relay **more than 800 ms before the child exited**, and one asserts the
+   wrapper's collector forwards a chunk live rather than only buffering it.
+   Simplify either back to a buffered call and a test fails.
 3. **Fire-and-forget channels, file first.** `data/auth-mfa.json` is written
    first because it is the only channel that cannot fail. Then an on-screen
    alert, platform-dispatched. Then the optional push hook. None is awaited and
@@ -220,10 +226,13 @@ than merely noisy.
 The on-screen alert reliably reaches the **screen**. Whether it reaches the
 **phone** depends entirely on whether the user wrote a push hook, and that is a
 seam this repository documents rather than a provider it hard-codes.
-`docs/CONFIG.md` ships two working examples: a one-line hook that pushes through
-the Claude mobile app, and a `curl` to a self-hosted notification service for
-people who want sub-second delivery. Neither is installed by default and neither
-is required.
+`docs/CONFIG.md` ships a worked example: a one-line `curl` to
+[ntfy](https://ntfy.sh) that reaches the phone in under a second, with Pushover,
+Telegram or a self-hosted server dropping into the same hook unchanged. It is not
+installed by default and is not required. (A `claude -p --allowedTools
+PushNotification` hook is a tempting one-liner but does **not** work here: that
+tool only pushes through a live Remote-Control-connected session, so a hook
+spawned fresh from a scheduler reports success and delivers nothing.)
 
 The capture selector itself is **unverified in production.** It is the element
 Entra ships today and the code path is unit-tested end to end, but no run in this

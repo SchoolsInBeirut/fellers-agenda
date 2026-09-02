@@ -9,6 +9,34 @@ is the honest answer to "does this still work?" — not the release date.
 
 ---
 
+## [1.1.1] — 2026-09-02
+
+**Last verified working: 2026-09-02.** The auth watchdog's MFA-number relay was
+exercised end to end for the first time — a cold login all the way through a
+Microsoft Authenticator number-match, with the number reaching a phone and the
+session restored. That live run surfaced three defects that every mock-based
+test had hidden, all fixed here.
+
+### Fixed — the MFA-number relay actually reaches the phone now
+
+- **A Windows `.cmd` push hook is spawned through `cmd.exe`.** Spawning a batch
+  file directly throws `EINVAL` on modern Node (the CVE-2024-27980 hardening),
+  so the hook silently never ran. It now goes through `cmd.exe /d /c`; a POSIX
+  `.sh` hook is still spawned directly.
+- **The push child is no longer `detached`.** A detached, console-less child on
+  Windows never completes a `curl` network write, so the push dropped while the
+  on-screen alert (which tolerates detachment) masked the failure. The push hook
+  now uses `stdio: "ignore"` + `unref()` and is never detached.
+- **The push channel example is `ntfy`, not `claude -p`.** A headless
+  `claude -p --allowedTools PushNotification` cannot deliver to a phone from a
+  background scheduled job — Claude's push needs a live connected session, so it
+  reports success and delivers nothing. `docs/CONFIG.md` now leads with a
+  one-line `curl` to ntfy, with Pushover/Telegram/self-host as drop-in
+  equivalents through the same seam.
+- Hardened the reauth output seam against a future regression: an exported
+  `streamCollector` guarantees the login's `MFA-NUMBER:` line is forwarded to
+  the relay per-chunk, never buffered until exit, with a test that proves it.
+
 ## [1.1.0] — 2026-09-02
 
 **Last verified working: 2026-09-02** (Node 22.x and 24.x, Windows 11 and macOS
@@ -44,8 +72,10 @@ through the Claude connector.)
   point: the prompt is worth about ninety seconds. There is a test that proves
   the number reaches the relay while the login is still running.
 - **A documented push-hook seam, with no provider hard-coded.** `docs/CONFIG.md`
-  ships two working examples — a one-line hook that pushes to the Claude mobile
-  app, and a `curl` for people who want sub-second delivery.
+  ships a worked example — a one-line `curl` to [ntfy](https://ntfy.sh) that
+  reaches the phone in under a second — with Pushover, Telegram or a self-hosted
+  server dropping into the same hook unchanged. On Windows the hook runs through
+  `cmd.exe` and is never a detached child, so a `curl` push actually completes.
 - **`data/reauth-last-output.txt`.** Every login now leaves its whole
   password-scrubbed transcript, last 20 kB, overwritten per run. One exit code
   and one last line cannot tell a crashed auth CLI apart from an unanswered
@@ -176,5 +206,6 @@ First public release.
 - Four design notes explaining the rules that exist because something went
   wrong once.
 
+[1.1.1]: https://github.com/SchoolsInBeirut/fellers-agenda/releases/tag/v1.1.1
 [1.1.0]: https://github.com/SchoolsInBeirut/fellers-agenda/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SchoolsInBeirut/fellers-agenda/releases/tag/v1.0.0

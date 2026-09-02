@@ -461,40 +461,47 @@ so the lane relays the number the instant it appears, over three channels:
    notification, and it is the only channel that reaches you when you are not at
    the machine.
 
-The hook is run detached with the message as `%1` / `$1` and the number as
-`%2` / `$2`. It must return immediately — the login is sitting in a
-ninety-second window and nothing may block it.
+The hook is run fire-and-forget with the message as `%1` / `$1` and the number as
+`%2` / `$2`. It must return immediately — the login is sitting in a ninety-second
+window and nothing may block it. On Windows the hook is invoked **through
+`cmd.exe`**, so a `.cmd` or `.bat` file works (a batch file cannot be spawned
+directly on current Node), and it is **not** run as a detached child — a detached,
+console-less Windows process is reaped before `curl` finishes its network write,
+so the push would be silently lost.
 
-**The recommended implementation is one line**, because the Claude mobile app is
-already a push channel this repository's runbooks are granted:
+**The recommended implementation is one line of `curl` to
+[ntfy](https://ntfy.sh)** — a free push service with no account to create. Install
+the ntfy app on your phone, subscribe to one long random topic name, and post to
+it:
 
 `data/push-hook.cmd` (Windows):
 
 ```bat
 @echo off
-start "" /b claude -p "Send a push notification with exactly this text: %~1" --allowedTools PushNotification
+curl.exe -s -m 8 -H "Title: Agenda login" -H "Priority: high" -d "%~1" https://ntfy.sh/your-long-random-topic-name
 ```
 
 `data/push-hook.sh` (macOS / Linux, `chmod +x`):
 
 ```sh
 #!/bin/sh
-claude -p "Send a push notification with exactly this text: $1" --allowedTools PushNotification &
+curl -fsS -m 8 -H "Title: Agenda login" -H "Priority: high" -d "$1" https://ntfy.sh/your-long-random-topic-name >/dev/null 2>&1
 ```
 
-That delivers *"Agenda login: enter 42 in your authenticator app"* to the phone
-you already have Claude on, with no account to create and no provider to trust.
+That delivers *"Agenda login: enter 42 in your authenticator app"* to your phone
+in under a second. **The topic name is the only secret** — anyone who knows it can
+read and post to it — so make it long and random. It is a *low-value* secret: an
+MFA number is useless to a stranger and expires in about ninety seconds. If you
+would rather not use the public server, ntfy self-hosts, and **Pushover or a
+Telegram bot drop into the same hook** unchanged — the `pushHook` seam does not
+care which you pick, and no provider is hard-coded anywhere.
 
-**Be honest with yourself about the latency.** Starting a `claude -p` session is
-not instant, and the prompt is only good for about ninety seconds, so this hook
-is a real improvement over nothing and is **not** a guarantee. If you want the
-fastest possible path, a two-line `curl` to [ntfy](https://ntfy.sh) or Pushover
-from the same hook arrives in under a second:
-
-```sh
-#!/bin/sh
-curl -fsS -d "$1" https://ntfy.sh/your-private-topic-name >/dev/null 2>&1 &
-```
+> **Not the Claude `PushNotification` tool.** A `claude -p … --allowedTools
+> PushNotification` one-liner looks tempting, but it does **not** work as a
+> background push hook: `PushNotification` only reaches your phone through a live
+> Remote-Control-connected Claude session, and a hook spawned fresh from the
+> scheduler has no such connection — it reports success and delivers nothing. Use
+> the `curl` hook above.
 
 Nothing in this repository hard-codes a provider, and `data/` is git-ignored, so
 whatever you put in the hook stays on your machine.

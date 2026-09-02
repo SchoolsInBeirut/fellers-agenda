@@ -401,6 +401,39 @@ function readMcpServers(root) {
   }
 }
 
+/**
+ * A collector for a login child's combined stdout+stderr. On every chunk it does
+ * two things, and which one can wait is the whole point:
+ *
+ *   1. FORWARD the chunk to `write` at once - synchronously, inside this data
+ *      event, before anything else - so a line the child just printed is already
+ *      on our own stdout.
+ *   2. ACCUMULATE it into a buffer for the transcript (writeTranscript), which is
+ *      read only after the child exits and can afford to wait.
+ *
+ * STEP 1 IS LOAD-BEARING, NOT COSMETIC. `src/auth-retry.mjs` runs this script and
+ * reads OUR stdout line by line to catch `MFA-NUMBER: <n>` and relay it to the
+ * user's phone. A number-matching prompt is dead about ninety seconds after it
+ * renders. A build of this that only buffered the child's output and flushed it
+ * to the transcript at exit stranded the number in the buffer: the parent lane
+ * never saw the digits until the login had already timed out, so every cold login
+ * failed at "token interception". Forwarding must stay live and must stay
+ * unconditional - the SILENT run is exactly the one whose stdout the auth lane is
+ * listening to, so never gate the forward behind `!quiet`.
+ */
+export function streamCollector(write = () => {}) {
+  let output = "";
+  const collect = (chunk) => {
+    output += chunk.toString(); // keep the whole transcript for writeTranscript()
+    try {
+      write(chunk); // ...and forward THIS chunk now, synchronously - see above
+    } catch {
+      /* a closed pipe downstream must never crash a login that is otherwise fine */
+    }
+  };
+  return { collect, output: () => output };
+}
+
 function run(command, args, env, { interactive }) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -409,21 +442,19 @@ function run(command, args, env, { interactive }) {
       stdio: [interactive ? "inherit" : "ignore", "pipe", "pipe"],
       env: env ? { ...process.env, ...env } : process.env,
     });
-    let output = "";
-    const collect = (d) => {
-      output += d.toString();
-      process.stdout.write(d);
-    };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
+    // Forward every chunk to our own stdout the instant it arrives: the auth lane
+    // is reading it line by line for the live MFA number. See streamCollector().
+    const sink = streamCollector((d) => process.stdout.write(d));
+    child.stdout.on("data", sink.collect);
+    child.stderr.on("data", sink.collect);
     const timer = setTimeout(() => child.kill(), CLI_TIMEOUT_MS);
     child.on("error", (e) => {
       clearTimeout(timer);
-      resolve({ output: `${output}\ncould not start ${command}: ${e.message}`, cliCode: 1 });
+      resolve({ output: `${sink.output()}\ncould not start ${command}: ${e.message}`, cliCode: 1 });
     });
     child.on("exit", (code) => {
       clearTimeout(timer);
-      resolve({ output, cliCode: code ?? 1 });
+      resolve({ output: sink.output(), cliCode: code ?? 1 });
     });
   });
 }

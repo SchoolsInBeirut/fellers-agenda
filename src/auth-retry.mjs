@@ -701,12 +701,14 @@ export function pushHookPath(root, { pushHook = null, platform = process.platfor
  *                            sitting right there. Platform-dispatched; see
  *                            screenAlert().
  *   3. the push hook       - OPTIONAL, and the seam where a real PHONE push
- *                            belongs. If the file exists it is run detached with
- *                            the message as argv[1] and the number as argv[2].
- *                            docs/CONFIG.md ships a one-line example that pushes
- *                            to the Claude mobile app; ntfy, Pushover or a plain
- *                            webhook drop in the same way, with no code change
- *                            here and no provider hard-coded anywhere.
+ *                            belongs. If the file exists it is run fire-and-forget
+ *                            (unref'd, and NEVER `detached` - see FIX 2 below) with
+ *                            the message as argv[1] and the number as argv[2]. A
+ *                            Windows .cmd/.bat hook is invoked through cmd.exe
+ *                            (FIX 1); a POSIX shell hook is spawned directly.
+ *                            docs/CONFIG.md ships a one-line `curl` to ntfy.sh as
+ *                            the worked example; Pushover, Telegram or any webhook
+ *                            drop in the same way, with no provider hard-coded here.
  */
 export function relayMfaNumber(
   number,
@@ -739,10 +741,27 @@ export function relayMfaNumber(
     }
   }
 
+  // The push hook is the only channel that reaches a PHONE, and on Windows it is
+  // almost always a curl to a notification service. Two Windows traps, both found
+  // in a live cold-login test, decide how it is spawned - and neither is the way
+  // the on-screen popup above is spawned:
+  //
+  //   FIX 1 - a .cmd/.bat hook CANNOT be spawned directly. Since Node's
+  //     CVE-2024-27980 hardening, spawn("hook.cmd", ...) throws EINVAL, so a
+  //     Windows batch hook must go through cmd.exe /d /c. A POSIX shell hook is
+  //     still run directly, as before.
+  //   FIX 2 - the push child must NOT be `detached`. A detached, console-less
+  //     Windows child is reaped before curl finishes its network write, so the
+  //     push is silently lost (the popup tolerates detachment; a network write
+  //     does not). So it is fire-and-forget via stdio:"ignore" + windowsHide +
+  //     .unref(), and deliberately without `detached`.
   const hook = pushHookPath(root, { pushHook, platform });
   if (existsSync(hook)) {
     try {
-      spawnFn(hook, [message, String(number)], { ...detached, cwd: root }).unref();
+      const winBatch = platform === "win32" && /\.(?:cmd|bat)$/i.test(hook);
+      const command = winBatch ? "cmd.exe" : hook;
+      const args = winBatch ? ["/d", "/c", hook, message, String(number)] : [message, String(number)];
+      spawnFn(command, args, { stdio: "ignore", windowsHide: true, cwd: root }).unref();
       delivered.push("push-hook");
     } catch {
       // an optional channel that failed is still optional
