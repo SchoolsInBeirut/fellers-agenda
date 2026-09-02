@@ -1,0 +1,28 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Questions, setup help, "did I do this right?"
+    url: https://github.com/SchoolsInBeirut/fellers-agenda/discussions
+    about: >-
+      Start here if you are stuck rather than sure something is broken. Setup
+      questions, "which connector should I use", and "is this supposed to
+      happen" all belong in Discussions.
+
+  - name: Troubleshooting guide
+    url: https://github.com/SchoolsInBeirut/fellers-agenda/blob/main/docs/TROUBLESHOOTING.md
+    about: >-
+      Symptom to cause to fix. Covers the MCP trust prompt, a hanging school
+      login, npx on Windows, "no data doc in Drive", checksum failures, an
+      oversize payload, and a scheduled task that looks installed but never
+      runs. Please check this before filing a bug.
+
+  - name: Platforms that are not supported, and why
+    url: https://github.com/SchoolsInBeirut/fellers-agenda/blob/main/docs/connectors/not-supported.md
+    about: >-
+      Some learning platforms have no viable general-purpose server. This page
+      says which, and is honest about it. Please read it before requesting one.
+
+  - name: Report a security vulnerability
+    url: https://github.com/SchoolsInBeirut/fellers-agenda/security/advisories/new
+    about: >-
+      Please use a private advisory, not a public issue. See SECURITY.md.

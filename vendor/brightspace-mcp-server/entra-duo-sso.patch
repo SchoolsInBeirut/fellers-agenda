@@ -1,0 +1,350 @@
+Subject: [PATCH] auth: drive the Entra ID + Duo Universal Prompt login chain
+
+Some institutions' identity providers no longer serve the older single-sign-on
+form this module waits for. They delegate to Microsoft Entra ID, which presents
+an email step, then a password step, then a second-factor prompt (commonly Duo's
+Universal Prompt), then a "Stay signed in?" page. The published build waits for a
+selector that never appears on that chain, so automated login hangs on a page
+that is fully rendered and fully ignored. Manual login works; automated login
+never completes; nothing says why.
+
+This drives the chain that is actually there, keeps the older selectors as a
+fallback so schools still on the previous flow are unaffected, and throws
+DISTINGUISHABLE errors so a caller can tell "the password was rejected" apart
+from "the second factor was never approved". Those are opposite problems with
+opposite fixes, and collapsing them into one generic failure is what makes an
+auth break take an afternoon to diagnose instead of a minute.
+
+It also softens two networkidle waits: an LMS home page that keeps polling
+connections open never goes idle, so the wait always burns its full timeout on a
+page that has been usable for seconds.
+
+---------------------------------------------------------------------------
+ HOW TO APPLY THIS — READ BEFORE YOU RUN ANYTHING
+---------------------------------------------------------------------------
+
+ 1. YOU PROBABLY DO NOT NEED IT. Try the ordinary path first:
+        npx -y brightspace-mcp-server@latest auth
+    Only if that HANGS on your school's login page does this file apply to you.
+    See docs/connectors/brightspace.md, which walks the whole decision.
+
+ 2. PREFER INSTALLING FROM UPSTREAM `main`. These fixes may already be merged
+    there even when they are not on npm yet, and an upstream install needs no
+    patching and no local build. That option is written up in NOTICE.md.
+
+ 3. THE FILE PATH BELOW IS A PLACEHOLDER. Upstream names this module after the
+    university it was originally written for, and that name is not stable across
+    versions. Find the real one:
+        ls node_modules/brightspace-mcp-server/build/auth/
+    then edit the two `---` / `+++` lines below to match before applying.
+
+ 4. THIS IS A REFERENCE PATCH, NOT A BYTE-EXACT DIFF. The hunk line numbers are
+    approximate and the surrounding context will have drifted. Apply it with
+    fuzz, or read it and make the same changes by hand:
+        patch -p1 --fuzz=5 < entra-duo-sso.patch
+    If a hunk is rejected, the `+` side below is complete enough to paste in.
+
+ 5. NEVER PATCH A PACKAGE MANAGER'S CACHE. Writing into node_modules inside an
+    npx or npm cache is invisible, survives nothing, and produces a machine
+    whose behaviour cannot be reproduced from its configuration. Take a real
+    checkout, patch that, build it, and point .mcp.json at your build.
+
+ 6. THE SAML ENTITY ID IS YOUR SCHOOL'S, NOT A CONSTANT. The navigation below
+    reads it from the environment so the same build works anywhere:
+        LMS_SAML_ENTITY_ID=https://idp.example.edu/idp/shibboleth
+    Find yours by opening your LMS login page and reading the link behind your
+    institution's button in the campus selector.
+
+---------------------------------------------------------------------------
+
+--- a/build/auth/institution-sso.js
++++ b/build/auth/institution-sso.js
+@@ -1,12 +1,44 @@
+ import { BrowserAuthError } from "../utils/errors.js";
+ import { log } from "../utils/logger.js";
+-const SELECTORS = {
+-    usernameInput: "input#username",
+-    passwordInput: "input#password",
+-    submitButton: 'button[name="_eventId_proceed"]',
+-};
++
++// The previous single-sign-on form. Kept as a fallback: institutions that have
++// not migrated still serve exactly this, and removing it would break them to
++// fix someone else.
++const LEGACY = {
++    usernameInput: "input#username",
++    passwordInput: "input#password",
++    submitButton: 'button[name="_eventId_proceed"]',
++};
++
++// Microsoft Entra ID. Two steps, not one: the email field submits and is
++// REPLACED by the password field, so a single fill-both-then-submit never
++// works here.
++const ENTRA = {
++    emailInput: 'input[name="loginfmt"]',
++    passwordInput: 'input[name="passwd"]',
++    submitButton: "#idSIButton9",
++    backButton: "#idBtn_Back",
++    usernameError: "#usernameError",
++    passwordError: "#passwordError",
++    kmsiCheckbox: "#KmsiCheckboxField",
++    accountTiles: "#tilesHolder .tile, [data-test-id='accountTile']",
++};
++
++const POLL_MS = 500;
++const MFA_TIMEOUT_MS = 120000;
++
++// Which SAML identity provider to initiate against. This is institution
++// specific and must not be hardcoded: set LMS_SAML_ENTITY_ID in the server's
++// environment. When it is unset the campus selector is left alone, which is
++// the correct behaviour for a manual login.
++const SAML_ENTITY_ID = process.env.LMS_SAML_ENTITY_ID || "";
+@@ -30,10 +62,10 @@ export class SSOFlow {
+     async login(page) {
+-        log("INFO", "Starting SSO login flow");
+-        await this.handleCampusSelector(page);
+-        await this.enterCredentials(page);
+-        await this.handleMFA(page);
+-        await this.handleStaySignedIn(page);
++        log("INFO", "Starting SSO login flow (Entra + second-factor chain)");
++        await this.handleCampusSelector(page);
++        await this.enterCredentials(page);
++        // One state machine instead of separate MFA and stay-signed-in steps,
++        // because the order those two appear in genuinely varies by tenant.
++        await this.rideToHome(page);
+         log("INFO", "Login successful - reached LMS home");
+         return true;
+     }
+@@ -48,9 +80,14 @@ export class SSOFlow {
+     async handleCampusSelector(page) {
+         const currentUrl = page.url();
+         if (currentUrl.includes("/d2l/login")) {
+-            await page.click("button.campus-selector");
++            // The campus selector's buttons live inside a shadow DOM, so they
++            // cannot be clicked by selector. Navigate straight to the SAML
++            // endpoint instead.
++            if (!SAML_ENTITY_ID) return;
+             const baseUrl = new URL(currentUrl).origin;
+-            await page.waitForSelector(SELECTORS.usernameInput);
++            log("INFO", "Campus selector detected - navigating directly to the identity provider");
++            const target = `${baseUrl}/d2l/lp/auth/saml/initiate-login?entityId=${encodeURIComponent(SAML_ENTITY_ID)}`;
++            await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {
++                log("WARN", "Identity-provider navigation did not settle - continuing");
++            });
+         }
+     }
++
++    async visible(page, selector) {
++        try {
++            return await page.locator(selector).first().isVisible({ timeout: 250 });
++        }
++        catch {
++            return false;
++        }
++    }
+@@ -60,12 +97,88 @@ export class SSOFlow {
+     async enterCredentials(page) {
+         if (!this.config.username || !this.config.password) {
+             throw new BrowserAuthError("Username and password are required for SSO login", "credentials");
+         }
+-        await page.fill(SELECTORS.usernameInput, this.config.username);
+-        await page.fill(SELECTORS.passwordInput, this.config.password);
+-        await page.click(SELECTORS.submitButton);
++        // The identity provider needs a beat to finish its client-side
++        // redirects, and WHICH form lands is not knowable in advance. Poll for
++        // whichever of the three appears rather than assuming one.
++        const deadline = Date.now() + 30000;
++        let variant = null;
++        while (Date.now() < deadline && !variant) {
++            if (await this.visible(page, ENTRA.emailInput)) variant = "entra";
++            else if (await this.visible(page, LEGACY.usernameInput)) variant = "legacy";
++            else if (await this.visible(page, ENTRA.accountTiles)) variant = "tiles";
++            else await page.waitForTimeout(POLL_MS);
++        }
++        if (!variant) {
++            // This is THE diagnostic message. "No known login form appeared" is
++            // what tells a maintainer the chain moved again, as opposed to a
++            // credential problem.
++            throw new BrowserAuthError("No known login form appeared - the identity provider's chain has changed", "credentials");
++        }
++        log("INFO", `Login form detected: ${variant}`);
++
++        if (variant === "legacy") {
++            await page.fill(LEGACY.usernameInput, this.config.username);
++            await page.fill(LEGACY.passwordInput, this.config.password);
++            await page.click(LEGACY.submitButton);
++            return;
++        }
++
++        if (variant === "tiles") {
++            // A previous account is remembered. Pick the matching tile, or fall
++            // through to the email form via "use another account".
++            const tile = page.locator(ENTRA.accountTiles, { hasText: this.config.username }).first();
++            if (await tile.isVisible({ timeout: 1000 }).catch(() => false)) {
++                log("INFO", "Selecting remembered account tile");
++                await tile.click();
++            }
++            else {
++                const other = page.locator("#otherTileText").first();
++                if (await other.isVisible({ timeout: 1000 }).catch(() => false)) await other.click();
++            }
++            await page.waitForTimeout(1000);
++        }
++
++        // Email step. May already have been skipped by a tile.
++        if (await this.visible(page, ENTRA.emailInput)) {
++            log("INFO", "Entering account email");
++            // The username is entered EXACTLY as configured. Never append a
++            // domain: whether the account is a bare name or a full address is a
++            // property of the tenant, and guessing it produces a rejection that
++            // looks like a wrong password.
++            await page.fill(ENTRA.emailInput, this.config.username);
++            await page.click(ENTRA.submitButton);
++        }
++
++        // Password step. It replaces the email field, so wait for it.
++        const pwDeadline = Date.now() + 20000;
++        let pwShown = false;
++        while (Date.now() < pwDeadline && !pwShown) {
++            if (await this.visible(page, ENTRA.usernameError)) {
++                const msg = await page.locator(ENTRA.usernameError).first().textContent().catch(() => null);
++                throw new BrowserAuthError(`CREDENTIALS-REJECTED (username): ${(msg || "").trim()}`, "credentials");
++            }
++            if (await this.visible(page, ENTRA.passwordInput)) pwShown = true;
++            else await page.waitForTimeout(POLL_MS);
++        }
++        if (!pwShown) {
++            throw new BrowserAuthError("Password field never appeared after the email step", "credentials");
++        }
++
++        log("INFO", "Entering password");
++        await page.fill(ENTRA.passwordInput, this.config.password);
++        await page.click(ENTRA.submitButton);
++
++        // Surface a wrong-password error verbatim rather than letting it time
++        // out later as an indistinguishable MFA failure.
++        await page.waitForTimeout(1500);
++        if (await this.visible(page, ENTRA.passwordError)) {
++            const msg = await page.locator(ENTRA.passwordError).first().textContent().catch(() => null);
++            throw new BrowserAuthError(`CREDENTIALS-REJECTED (password): ${(msg || "").trim()}`, "credentials");
++        }
+     }
+-    async handleMFA(page) {
+-        await page.waitForURL(/\/d2l\/home/, { timeout: 120000 });
+-    }
+-    async handleStaySignedIn(page) {
+-        const yes = page.locator("input[type=submit][value='Yes']").first();
+-        if (await yes.isVisible().catch(() => false)) await yes.click();
+-    }
++
++    /**
++     * Post-password ride: the second-factor prompt and the "stay signed in?"
++     * page, in whatever order they appear, until the LMS home page.
++     */
++    async rideToHome(page) {
++        const deadline = Date.now() + MFA_TIMEOUT_MS;
++        let pushNudged = false, trustClicked = false, kmsiClicked = false;
++        let codeLogged = false, sawSecondFactor = false;
++        log("WARN", "Waiting for approval on your phone (if a prompt is required)...");
++        while (Date.now() < deadline) {
++            const url = page.url();
++            if (url.includes("/d2l/home")) return;
++            if (url.includes("/d2l/")) {
++                await page.waitForURL(/\/d2l\/home/, { timeout: 15000 }).catch(() => {});
++                if (page.url().includes("/d2l/home")) return;
++            }
++            try {
++                if (url.includes("duosecurity.com")) {
++                    sawSecondFactor = true;
++                    // Verified Push shows a code the phone must match. Print it
++                    // or the user is staring at a phone asking for a number
++                    // that only exists on a headless browser they cannot see.
++                    if (!codeLogged) {
++                        const code = await page.locator(".verification-code, [data-testid='verification-code']").first()
++                            .textContent({ timeout: 250 }).catch(() => null);
++                        if (code && code.trim()) {
++                            log("WARN", `SECOND-FACTOR CODE: ${code.trim()} - match this on your phone`);
++                            codeLogged = true;
++                        }
++                    }
++                    // Always accept "remember this browser". That is what makes
++                    // later runs on the same persistent profile prompt-free,
++                    // which is the difference between hands-free re-auth and a
++                    // push every two hours.
++                    const trust = page.locator("#trust-browser-button").first();
++                    if (!trustClicked && (await trust.isVisible({ timeout: 250 }).catch(() => false))) {
++                        log("INFO", "Asked to trust this browser - clicking yes");
++                        await trust.click().catch(() => {});
++                        trustClicked = true;
++                    }
++                    // Nudge the push if it was not sent automatically.
++                    if (!pushNudged) {
++                        for (const sel of ["button.resend-button", "button:has-text('Send Me a Push')", "button:has-text('Try again')", "button:has-text('Send a push')"]) {
++                            const btn = page.locator(sel).first();
++                            if (await btn.isVisible({ timeout: 150 }).catch(() => false)) {
++                                log("INFO", "Requesting a push");
++                                await btn.click().catch(() => {});
++                                pushNudged = true;
++                                break;
++                            }
++                        }
++                    }
++                    const yesDevice = page.locator("button:has-text('Yes, this is my device')").first();
++                    if (await yesDevice.isVisible({ timeout: 150 }).catch(() => false)) {
++                        await yesDevice.click().catch(() => {});
++                    }
++                }
++                else if (await this.visible(page, ENTRA.kmsiCheckbox)) {
++                    if (!kmsiClicked) {
++                        log("INFO", "'Stay signed in?' - answering yes");
++                        await page.locator(ENTRA.kmsiCheckbox).first().check().catch(() => {});
++                        await page.click(ENTRA.submitButton).catch(() => {});
++                        kmsiClicked = true;
++                    }
++                }
++                else if (await this.visible(page, "input[type=submit][value='Yes']")) {
++                    await page.click("input[type=submit][value='Yes']").catch(() => {});
++                }
++                else if (await this.visible(page, ENTRA.passwordError)) {
++                    const msg = await page.locator(ENTRA.passwordError).first().textContent().catch(() => null);
++                    throw new BrowserAuthError(`CREDENTIALS-REJECTED (password): ${(msg || "").trim()}`, "credentials");
++                }
++            }
++            catch (error) {
++                if (error instanceof BrowserAuthError) throw error;
++                // A navigation raced a DOM probe. Normal during redirects.
++            }
++            await page.waitForTimeout(POLL_MS);
++        }
++        // Two different timeouts, deliberately worded differently: one means
++        // "approve the next push", the other means "the chain changed again".
++        throw new BrowserAuthError(sawSecondFactor
++            ? "MFA-TIMEOUT: the second-factor prompt was never approved within 120 seconds"
++            : "MFA-TIMEOUT: never reached the LMS home page within 120 seconds after sign-in", "mfa_approval");
++    }
+ }
+
+--- a/build/auth/browser-auth.js
++++ b/build/auth/browser-auth.js
+@@ -430,7 +430,12 @@ export class BrowserAuth {
+                 if (!loginSuccess) {
+                     throw new BrowserAuthError("SSO login flow failed", "sso_login");
+                 }
+-                await page.waitForLoadState("networkidle", { timeout: 30000 });
++                // The LMS home page keeps polling connections open, so
++                // "networkidle" can never become true and this wait always
++                // burns its full timeout on a page that has been usable for
++                // seconds. We are already on /d2l/home here; settling is
++                // best-effort only.
++                await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {
++                    log("WARN", "Post-login settle wait timed out - continuing (already on home)");
++                });
+                 return false;
+             }
+             log("INFO", "Already authenticated - skipping SSO login");
+-            await page.waitForLoadState("networkidle", { timeout: 30000 });
++            await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {
++                log("WARN", "Settle wait timed out - continuing (already on home)");
++            });
+             return true;
+         }

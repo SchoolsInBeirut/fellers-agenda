@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+#  Everything a user generates. None of it belongs on GitHub.
+#
+#  Your agenda contains your courses, your grades, your deadlines and your
+#  mail. Treat this file as a safety rail, not a suggestion: if you add a new
+#  output path anywhere in the pipeline, add it here in the same commit.
+# ---------------------------------------------------------------------------
+
+# The working directory. Every scrape, render, plan and ledger lands here.
+data/*
+!data/.gitkeep
+
+# Your answers to onboarding: timezone, school, courses, difficulty, schedule.
+config.json
+config.json.bak
+
+# Environment overrides for .mcp.json (${VAR} interpolation).
+.env
+
+# Rendered pages.
+agenda.html
+agenda-preview.html
+demo-agenda.html
+
+# Rotating local state mirrors written by drive-bundle.mjs --pack.
+backups/
+
+# Any base64 envelope written anywhere (payload, mirror, oversize spill).
+*.b64.txt
+
+# Credentials, in every shape anything in this repo has ever used.
+*credentials*.json
+*.dpapi
+.d2l-session/
+
+# Python virtualenvs for the optional Gradescope extra.
+.venv*/
+__pycache__/
+*.pyc
+
+# Node.
+node_modules/
+
+# Editor and OS noise.
+*.bak
+.DS_Store
+Thumbs.db
+
+# Screenshots. Nothing in the pipeline writes an image, so a blanket *.png ignore
+# only ever blocked the one image this project wants committed - the README
+# screenshot. Ignore the two places a stray one actually lands (the repo root,
+# where you drop a screengrab while debugging, and data/, already covered above)
+# and leave docs/images/ committable.
+/*.png
+/*.jpg
+/*.jpeg

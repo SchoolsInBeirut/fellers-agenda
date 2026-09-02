@@ -1,0 +1,112 @@
+{
+ "course": "PHYS 221",
+ "weeks": [
+  {
+   "start": "2026-08-31",
+   "focus": [
+    "F1",
+    "F2"
+   ],
+   "note": "Kinematics week. First sitting on Thursday."
+  },
+  {
+   "start": "2026-09-07",
+   "focus": [
+    "F3",
+    "A1"
+   ],
+   "note": "Newton's laws. Weekly reassessment offered Friday."
+  },
+  {
+   "start": "2026-09-14",
+   "focus": [
+    "F4",
+    "A2"
+   ],
+   "note": "Rotational dynamics. Sitting 2 on Thursday; the sign-up survey closes Wednesday at noon."
+  },
+  {
+   "start": "2026-09-21",
+   "focus": [
+    "A3",
+    "E1"
+   ],
+   "note": "Central forces. No reassessment this week."
+  }
+ ],
+ "standards": {
+  "F1": {
+   "name": "Kinematics in one dimension",
+   "class": "F",
+   "status": "met"
+  },
+  "F2": {
+   "name": "Vectors and relative motion",
+   "class": "F",
+   "status": "met"
+  },
+  "F3": {
+   "name": "Newton's laws",
+   "class": "F",
+   "status": "met"
+  },
+  "F4": {
+   "name": "Rotational dynamics",
+   "class": "F",
+   "status": "not met"
+  },
+  "A1": {
+   "name": "Energy methods",
+   "class": "A",
+   "status": "met"
+  },
+  "A2": {
+   "name": "Momentum and collisions",
+   "class": "A",
+   "status": "not met"
+  },
+  "A3": {
+   "name": "Central forces",
+   "class": "A",
+   "status": "not met"
+  },
+  "E1": {
+   "name": "Extended problem solving",
+   "class": "A",
+   "status": "not met"
+  }
+ },
+ "sittings": [
+  {
+   "date": "2026-09-03",
+   "standards": [
+    "F1",
+    "F2"
+   ],
+   "attending": true
+  },
+  {
+   "date": "2026-09-11",
+   "standards": [
+    "F3",
+    "A1"
+   ],
+   "attending": false
+  },
+  {
+   "date": "2026-09-17",
+   "standards": [
+    "F4",
+    "A2"
+   ],
+   "attending": true
+  },
+  {
+   "date": "2026-10-01",
+   "standards": [
+    "A3",
+    "E1"
+   ]
+  }
+ ]
+}

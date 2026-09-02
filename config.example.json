@@ -1,0 +1,167 @@
+{
+  "namespace": "agenda",
+  "title": "Weekly Agenda",
+  "timezone": "[NOT SET]",
+  "wakeTime": "10:00",
+
+  "institution": {
+    "name": "[NOT SET]",
+    "lmsHost": "[NOT SET]",
+    "mailDomains": []
+  },
+
+  "courses": [
+    { "id": 110001, "code": "PHYS 221", "name": "Classical Mechanics" },
+    { "id": 110002, "code": "MATH 210", "name": "Linear Algebra" },
+    { "id": 110003, "code": "CHEM 115", "name": "General Chemistry" },
+    { "id": 110004, "code": "HIST 140", "name": "Modern World History" },
+    { "id": 110006, "code": "SEM 100", "name": "Department Seminar", "skip": true }
+  ],
+
+  "difficulty": {
+    "PHYS 221": 5,
+    "MATH 210": 4,
+    "CHEM 115": 4,
+    "HIST 140": 3,
+    "SEM 100": 0,
+    "Research": 3,
+    "Mail": 2
+  },
+
+  "schedule": {
+    "MATH 210": {
+      "room": "LAB 110",
+      "attend": true,
+      "from": "2026-08-24",
+      "until": "2026-12-09",
+      "meets": [{ "days": ["Tue", "Thu"], "start": "13:30", "end": "14:45" }]
+    },
+    "PHYS 221": {
+      "room": "HALL 101",
+      "attend": false,
+      "from": "2026-08-25",
+      "until": "2026-12-10",
+      "meets": [{ "days": ["Tue", "Thu"], "start": "09:00", "end": "10:15" }]
+    }
+  },
+
+  "studyMinutes": {
+    "weekday": 240,
+    "weekend": 300,
+    "weekdayWindow": ["10:30", "23:00"],
+    "weekendWindow": ["10:30", "22:00"]
+  },
+
+  "leadTimeDays": {
+    "exam": 7,
+    "project": 5,
+    "lab": 5,
+    "homework": 3,
+    "quiz": 2,
+    "default": 3
+  },
+
+  "focus": {
+    "tuning": {
+      "maxBlocksPerDay": 3,
+      "blockStepMinutes": 15,
+      "breakMinutes": 15,
+      "minBlockMinutes": 30,
+      "maxBlockMinutes": 150,
+      "dayStart": "08:00",
+      "dayEnd": "23:00"
+    }
+  },
+
+  "scrapeWindowDays": 60,
+  "announcementLookbackDays": 14,
+
+  "standardsPlan": {
+    "enabled": false,
+    "course": "[NOT SET]",
+    "label": "Standards"
+  },
+
+  "sideProject": {
+    "enabled": false,
+    "label": "Side Project",
+    "provider": "github",
+    "org": "[NOT SET]",
+    "repos": [],
+    "minDailyMinutes": 60,
+    "maxDailyMinutes": 180
+  },
+
+  "connectors": {
+    "lms": {
+      "brightspace": {
+        "enabled": true,
+        "mcpServer": "brightspace",
+        "package": "brightspace-mcp-server@latest"
+      },
+      "canvas": {
+        "_comment": "baseUrl is your school's Canvas address, e.g. https://canvas.example.edu - it defaults to institution.lmsHost. token is a personal access token from Canvas > Account > Settings > New Access Token. It stays in this file, which is git-ignored, and is never logged. courseFilter limits the sweep to these course codes or ids; empty means every active enrolment.",
+        "enabled": false,
+        "baseUrl": "[NOT SET]",
+        "token": "[NOT SET]",
+        "courseFilter": []
+      }
+    },
+    "mail": {
+      "outlook": {
+        "enabled": false,
+        "sentItemsScan": true,
+        "windowDays": 14,
+        "noiseDomains": ["news.example.edu", "events.example.edu"],
+        "noiseLocalParts": ["newsletter", "no-reply", "digest"],
+        "keepDomains": [],
+        "dropAddrs": []
+      }
+    },
+    "calendar": {
+      "outlook": { "enabled": false, "category": "Agenda", "horizonDays": 21, "maxEvents": 60 },
+      "ics": { "enabled": false, "path": "data/agenda.ics" }
+    },
+    "board": {
+      "github": { "enabled": false, "budgetMs": 60000 }
+    },
+    "grades": {
+      "gradescope": { "enabled": false, "python": "python", "termLabel": "[NOT SET]" }
+    },
+    "materials": {
+      "enabled": false,
+      "root": "[NOT SET]",
+      "categories": ["Syllabus", "Lecture Notes", "Example Problems", "Homework", "Books", "Exams", "Other"],
+      "maxFileMB": 300
+    }
+  },
+
+  "drive": {
+    "enabled": true,
+    "connectorName": "Google Drive",
+    "maxEmitChars": 12000,
+    "maxMirrorChars": 20000,
+    "mirror": true
+  },
+
+  "artifact": { "url": "[NOT SET]" },
+
+  "notifications": {
+    "calendar": false,
+    "emailDigest": "off",
+    "digestTo": "[NOT SET]",
+    "push": { "newAssignments": true, "dueSoonUnsubmittedHours": 48 }
+  },
+
+  "scheduler": {
+    "taskPrefix": "Agenda",
+    "morningAt": "07:03",
+    "eveningAt": "18:07",
+    "quietUntil": "07:23",
+    "syncWindow": ["09:00", "23:00"],
+    "syncGapHours": 3,
+    "graceMinutes": 20,
+    "debounceMinutes": 25,
+    "maxRescuesPerLane": 2
+  }
+}

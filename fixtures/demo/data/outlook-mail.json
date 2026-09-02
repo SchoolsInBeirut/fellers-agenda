@@ -1,0 +1,48 @@
+{
+ "mail": [
+  {
+   "id": "m-1",
+   "from": "Dr. A. Mentor",
+   "addr": "a.mentor@example.edu",
+   "subj": "Thursday research meeting - which dataset?",
+   "recv": "2026-09-13T15:20:00.000Z",
+   "tag": "research",
+   "gist": "She wants to know which of the two datasets you will present on Thursday.",
+   "ask": "Pick one and reply",
+   "replyBy": "2026-09-15T20:00:00.000Z"
+  },
+  {
+   "id": "m-2",
+   "from": "Records Office",
+   "addr": "records@example.edu",
+   "subj": "Enrolment confirmation form",
+   "recv": "2026-09-12T09:05:00.000Z",
+   "tag": "action",
+   "gist": "A form needs signing and returning before the add/drop deadline.",
+   "ask": "Sign and return",
+   "replyBy": "2026-09-19T20:00:00.000Z"
+  },
+  {
+   "id": "m-3",
+   "from": "Prof. R. Lang",
+   "addr": "r.lang@example.edu",
+   "subj": "PHYS 221: sitting 2 sign-up closes Wednesday",
+   "recv": "2026-09-11T14:10:00.000Z",
+   "tag": "course",
+   "gist": "The sign-up survey for the second standards sitting closes Wednesday at noon.",
+   "ask": null,
+   "replyBy": null
+  },
+  {
+   "id": "m-4",
+   "from": "Grants Office",
+   "addr": "grants@example.org",
+   "subj": "Abstract deadline moved to the 23rd",
+   "recv": "2026-09-10T17:45:00.000Z",
+   "tag": "info",
+   "gist": "The travel-grant abstract deadline moved back one week.",
+   "ask": null,
+   "replyBy": null
+  }
+ ]
+}

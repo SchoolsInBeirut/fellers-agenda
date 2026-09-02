@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "brightspace": {
+      "command": "npx",
+      "args": ["-y", "brightspace-mcp-server@latest"]
+    }
+  }
+}

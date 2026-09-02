@@ -1,0 +1,18 @@
+[
+  {
+    "id": 110001,
+    "name": "Classical Mechanics",
+    "course_code": "PHYS 221",
+    "workflow_state": "available",
+    "enrollment_term_id": 42,
+    "term": { "id": 42, "name": "Fall 2026" }
+  },
+  {
+    "id": 110002,
+    "name": "Linear Algebra",
+    "course_code": "MATH 210",
+    "workflow_state": "available",
+    "enrollment_term_id": 42,
+    "term": { "id": 42, "name": "Fall 2026" }
+  }
+]

@@ -1,0 +1,22 @@
+{
+ "110001::homework::problem set 3": "Six problems on rotational dynamics. Questions 4 and 5 are the long ones.",
+ "110001::homework::problem set 4": "Central forces and orbits. Builds directly on Problem Set 3.",
+ "110001::quiz::reading quiz 6": "Ten multiple-choice questions on chapter 7, open for 24 hours.",
+ "110001::lab::lab 2 projectile motion": "Write-up of the projectile experiment, including the error analysis.",
+ "110001::exam::standards sitting 2": "In-class sitting covering standards F3, F4 and A1. Retakes allowed later.",
+ "110002::homework::homework 3": "Row reduction and rank. Eight exercises from section 2.4.",
+ "110002::homework::homework 4": "Determinants and Cramer's rule.",
+ "110002::quiz::quiz 4": "Fifteen-minute in-class quiz on linear independence.",
+ "110002::exam::midterm exam 1": "Covers chapters 1 to 3. One page of notes allowed.",
+ "110002::project::written assignment 1": "A short proof-writing exercise, submitted as a PDF.",
+ "110003::lab::lab report 2": "Titration write-up with the full uncertainty budget.",
+ "110003::quiz::prelab quiz 4": "Five questions to unlock this week's lab bench.",
+ "110003::homework::problem set 5": "Stoichiometry and limiting reagents.",
+ "110003::other::safety module": "Online module. Twenty minutes, and the lab is locked until it is done.",
+ "110003::exam::exam 1": "Chapters 1 to 4. Periodic table provided.",
+ "110004::homework::reading journal week 4": "Three hundred words on this week's two readings.",
+ "110004::project::response paper 2": "Eight hundred words citing two primary sources.",
+ "110004::project::primary source analysis": "Pick one document from the week 5 packet and analyse it.",
+ "110004::project::midterm essay": "Two thousand words. Thesis due to the tutor a week early.",
+ "0::email::reply to a mentor about the thursday research meeting": "She asked which of the two datasets you want to present."
+}

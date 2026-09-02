@@ -1,0 +1,409 @@
+{
+ "scrapedAt": "2026-09-14T12:55:00.000Z",
+ "items": [
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Problem Set 2",
+   "due": "2026-09-08T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox",
+    "grade"
+   ],
+   "submitted": true,
+   "approx": false,
+   "url": null,
+   "grade": "18 / 20"
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Problem Set 3",
+   "due": "2026-09-15T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Problem Set 4",
+   "due": "2026-09-22T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Reading Quiz 5",
+   "due": "2026-09-16T13:00:00.000Z",
+   "type": "quiz",
+   "sources": [
+    "quiz",
+    "grade"
+   ],
+   "submitted": true,
+   "approx": false,
+   "url": null,
+   "grade": "10 / 10"
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Reading Quiz 6",
+   "due": "2026-09-23T13:00:00.000Z",
+   "type": "quiz",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Lab 2 Projectile Motion",
+   "due": "2026-09-18T03:59:00.000Z",
+   "type": "lab",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Standards Sitting 2",
+   "due": "2026-09-17T13:00:00.000Z",
+   "type": "exam",
+   "sources": [
+    "calendar"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Homework 2",
+   "due": "2026-09-09T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox",
+    "grade"
+   ],
+   "submitted": true,
+   "approx": false,
+   "url": null,
+   "grade": "95 %"
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Homework 3",
+   "due": "2026-09-16T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Homework 4",
+   "due": "2026-09-23T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Quiz 4",
+   "due": "2026-09-15T17:45:00.000Z",
+   "type": "quiz",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Midterm Exam 1",
+   "due": "2026-09-29T22:00:00.000Z",
+   "type": "exam",
+   "sources": [
+    "calendar",
+    "content"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Written Assignment 1",
+   "due": "2026-10-02T03:59:00.000Z",
+   "type": "project",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Lab Report 1",
+   "due": "2026-09-10T03:59:00.000Z",
+   "type": "lab",
+   "sources": [
+    "dropbox",
+    "grade"
+   ],
+   "submitted": true,
+   "approx": false,
+   "url": null,
+   "grade": "88 %"
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Lab Report 2",
+   "due": "2026-09-17T03:59:00.000Z",
+   "type": "lab",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Prelab Quiz 4",
+   "due": "2026-09-15T13:00:00.000Z",
+   "type": "quiz",
+   "sources": [
+    "quiz"
+   ],
+   "submitted": false,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Problem Set 5",
+   "due": "2026-09-21T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Safety Module",
+   "due": "2026-09-19T03:59:00.000Z",
+   "type": "other",
+   "sources": [
+    "content"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Exam 1",
+   "due": "2026-09-24T18:30:00.000Z",
+   "type": "exam",
+   "sources": [
+    "calendar",
+    "content"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Discussion Post 3",
+   "due": "2026-09-15T03:59:00.000Z",
+   "type": "other",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": true,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Reading Journal Week 4",
+   "due": "2026-09-16T03:59:00.000Z",
+   "type": "homework",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Response Paper 2",
+   "due": "2026-09-18T03:59:00.000Z",
+   "type": "project",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Primary Source Analysis",
+   "due": "2026-09-25T03:59:00.000Z",
+   "type": "project",
+   "sources": [
+    "dropbox"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Midterm Essay",
+   "due": "2026-10-06T03:59:00.000Z",
+   "type": "project",
+   "sources": [
+    "content"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 0,
+   "course": "Mail",
+   "title": "Reply to A. Mentor about the Thursday research meeting",
+   "due": "2026-09-15T20:00:00.000Z",
+   "type": "email",
+   "sources": [
+    "outlook"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 0,
+   "course": "Mail",
+   "title": "Send the enrolment form back to the Records Office",
+   "due": "2026-09-19T20:00:00.000Z",
+   "type": "task",
+   "sources": [
+    "outlook"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": null
+  },
+  {
+   "courseId": 0,
+   "course": "Research",
+   "title": "Draft the grant abstract",
+   "due": "2026-09-23T20:00:00.000Z",
+   "type": "task",
+   "sources": [
+    "outlook"
+   ],
+   "submitted": null,
+   "approx": true,
+   "url": null
+  }
+ ],
+ "announcements": [
+  {
+   "id": "a-1",
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Sitting 2 covers standards F3, F4 and A1",
+   "posted": "2026-09-11T14:02:00.000Z",
+   "body": "Bring a calculator. The sign-up survey closes Wednesday at noon."
+  },
+  {
+   "id": "a-2",
+   "courseId": 110002,
+   "course": "MATH 210",
+   "title": "Office hours moved to Wednesday",
+   "posted": "2026-09-12T18:30:00.000Z",
+   "body": "This week only: Wednesday 15:00-16:30 in LAB 110."
+  },
+  {
+   "id": "a-3",
+   "courseId": 110003,
+   "course": "CHEM 115",
+   "title": "Exam 1 room assignment",
+   "posted": "2026-09-13T09:15:00.000Z",
+   "body": "Sections A-M in SCI 105, N-Z in WEST 118."
+  },
+  {
+   "id": "a-4",
+   "courseId": 110004,
+   "course": "HIST 140",
+   "title": "Response Paper 2 prompt posted",
+   "posted": "2026-09-09T20:45:00.000Z",
+   "body": "Eight hundred words. Cite two primary sources."
+  },
+  {
+   "id": "a-5",
+   "courseId": 110001,
+   "course": "PHYS 221",
+   "title": "Problem Set 3 hint",
+   "posted": "2026-09-13T22:10:00.000Z",
+   "body": "Question 4 is easier in polar coordinates."
+  }
+ ],
+ "errors": []
+}

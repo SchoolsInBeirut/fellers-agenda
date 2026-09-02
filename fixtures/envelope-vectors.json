@@ -1,0 +1,205 @@
+{
+ "_comment": "Golden vectors shared by the Node envelope tests and the page-side decoder tests. Regenerate only if the wire format itself changes: both sides assert against these exact strings.",
+ "crc32": {
+  "123456789": "cbf43926",
+  "": "00000000",
+  "a": "e8b7be43",
+  "The quick brown fox jumps over the lazy dog": "414fa339"
+ },
+ "plain": {
+  "text": "AGD1.eyJ2Ijo0LCJzY3JhcGVkQXQiOiIyMDI2LTA5LTE0VDEyOjU1OjAwLjAwMFoiLCJ0eiI6IkFtZXJpY2EvTmV3X1lvcmsiLCJ3ZWlnaHRzIjp7Ik1BVEggMjEwIjo0LjIsIlNpZGUgUHJvamVjdCI6Mi44fSwic2NoZWR1bGUiOlt7ImMiOiJNQVRIIDIxMCIsImF0dGVuZCI6dHJ1ZSwicm9vbSI6IkxBQiAxMTAiLCJkYXlzIjpbIlR1ZSIsIlRodSJdLCJzdGFydCI6IjEzOjMwIiwiZW5kIjoiMTQ6NDUiLCJmcm9tIjoiMjAyNi0wOC0yNSIsInVudGlsIjoiMjAyNi0xMi0xMCJ9XSwiYm9hcmQiOlt7InJlcG8iOiJleGFtcGxlLW9yZy9leGFtcGxlLXdlYiIsIm4iOjg4LCJ0IjoiRW1wdHkgc3RhdGUgZm9yIHRoZSByZXN1bHRzIGxpc3QiLCJraW5kIjoiaXNzdWUiLCJ1IjpudWxsLCJ1cGQiOiIyMDI2LTA5LTExVDE5OjEyOjAwLjAwMFoifV0sImRvbmUiOlt7ImsiOiIxMTAwMDI6OmhvbWV3b3JrOjpob21ld29yayAyIiwiYXQiOiIyMDI2LTA5LTEzVDIwOjAwOjAwLjAwMFoiLCJ2aWEiOiJncmFkZSJ9XSwiaXRlbXMiOlt7ImsiOiIxMTAwMDI6OmhvbWV3b3JrOjpob21ld29yayAzIiwiYyI6Ik1BVEggMjEwIiwiY2lkIjoxMTAwMDIsInQiOiJIb21ld29yayAzIOKAlCByw6lkdWN0aW9uIHBhciBsaWduZXMiLCJkIjoiMjAyNi0wOS0xNlQwMzo1OTowMC4wMDBaIiwidHkiOiJob21ld29yayIsInMiOm51bGwsInNyYyI6WyJkcm9wYm94Il0sImRlc2MiOiJSb3cgcmVkdWN0aW9uIGFuZCByYW5rLiIsInUiOm51bGx9XSwiYW5ub3VuY2VtZW50cyI6W3siYyI6Ik1BVEggMjEwIiwidCI6Ik9mZmljZSBob3VycyBtb3ZlZCB0byBXZWRuZXNkYXkiLCJwIjoiMjAyNi0wOS0xMlQxODozMDowMC4wMDBaIn1dLCJtYWlsIjpbeyJmcm9tIjoiRHIuIEEuIE1lbnRvciIsImFkZHIiOiJhLm1lbnRvckBleGFtcGxlLmVkdSIsInN1YmoiOiJUaHVyc2RheSByZXNlYXJjaCBtZWV0aW5nIiwicmVjdiI6IjIwMjYtMDktMTNUMTU6MjA6MDAuMDAwWiIsInRhZyI6InJlc2VhcmNoIiwiZ2lzdCI6IldoaWNoIGRhdGFzZXQ/IiwiYXNrIjoiUGljayBvbmUiLCJyZXBseUJ5IjoiMjAyNi0wOS0xNVQyMDowMDowMC4wMDBaIn1dLCJmb2N1cyI6W3siZCI6IjIwMjYtMDktMTQiLCJibG9ja3MiOlt7ImMiOiJNQVRIIDIxMCIsIndoYXQiOiJIb21ld29yayAzIiwid2h5IjoiZHVlIGluIDIgZGF5cyIsInQiOiIxOTowMCIsIm1pbnMiOjkwfV19XSwiZXJyb3JzIjpbXX0=.END",
+  "json": {
+   "v": 4,
+   "scrapedAt": "2026-09-14T12:55:00.000Z",
+   "tz": "America/New_York",
+   "weights": {
+    "MATH 210": 4.2,
+    "Side Project": 2.8
+   },
+   "schedule": [
+    {
+     "c": "MATH 210",
+     "attend": true,
+     "room": "LAB 110",
+     "days": [
+      "Tue",
+      "Thu"
+     ],
+     "start": "13:30",
+     "end": "14:45",
+     "from": "2026-08-25",
+     "until": "2026-12-10"
+    }
+   ],
+   "board": [
+    {
+     "repo": "example-org/example-web",
+     "n": 88,
+     "t": "Empty state for the results list",
+     "kind": "issue",
+     "u": null,
+     "upd": "2026-09-11T19:12:00.000Z"
+    }
+   ],
+   "done": [
+    {
+     "k": "110002::homework::homework 2",
+     "at": "2026-09-13T20:00:00.000Z",
+     "via": "grade"
+    }
+   ],
+   "items": [
+    {
+     "k": "110002::homework::homework 3",
+     "c": "MATH 210",
+     "cid": 110002,
+     "t": "Homework 3 — réduction par lignes",
+     "d": "2026-09-16T03:59:00.000Z",
+     "ty": "homework",
+     "s": null,
+     "src": [
+      "dropbox"
+     ],
+     "desc": "Row reduction and rank.",
+     "u": null
+    }
+   ],
+   "announcements": [
+    {
+     "c": "MATH 210",
+     "t": "Office hours moved to Wednesday",
+     "p": "2026-09-12T18:30:00.000Z"
+    }
+   ],
+   "mail": [
+    {
+     "from": "Dr. A. Mentor",
+     "addr": "a.mentor@example.edu",
+     "subj": "Thursday research meeting",
+     "recv": "2026-09-13T15:20:00.000Z",
+     "tag": "research",
+     "gist": "Which dataset?",
+     "ask": "Pick one",
+     "replyBy": "2026-09-15T20:00:00.000Z"
+    }
+   ],
+   "focus": [
+    {
+     "d": "2026-09-14",
+     "blocks": [
+      {
+       "c": "MATH 210",
+       "what": "Homework 3",
+       "why": "due in 2 days",
+       "t": "19:00",
+       "mins": 90
+      }
+     ]
+    }
+   ],
+   "errors": []
+  }
+ },
+ "gzip": {
+  "text": "AGD2.49b19cad.H4sIAAAAAAACCo1TXY7TMBi8ijXPbnHSFnW/F+gKJB74E1RawWqF3Phr421iR7azpaxW4hBcgnNwE06CnFK2i3jgzfpiz8w3M7nFDWgqEaugOzaLBEKpyscjdTYqpsuipNmMlBorpT5CIn0BYdFysJV+9Jp3nz74sIXEju2mThF0i1eL5QtRFgo0HZcS761h8Tb4a64SqBzP7zJZzaZvGHR5iwp0/0ZCp8TOgFLoWSJ434LwcnEuiuGz0fsIusSyZ0gs6x5XEjHpkIUXE5rkSwMAiilNZ5BYhwHjsNV8VOZZ75JtjsOiHBUKd1cSK6+DGVQF7jwI/Fm3XcMjHzaPjucdryDhQPO5RKZ93nZpL2LSicXaB5FqFoFj36QoGhsTJLZ2kGRjHHT3INc3jUTfmVPDi2VxRkX5x/CsyXh3MGqbdyqUUiVR7Vve+bC9P4lyMO8UbbIsFSl1Et+N1SBsgjY8YNvEbfwf8Ank30FV1oAOTw42vPhzWfz8+k2EH99NXyXrneh0EI3dOI45wVOJj5dqQrOz04btQTjyQiIerYqhysGb4LuV/5xjNxyzpnd+JwIfubQzImi3Hd/bnDfVzvneVdyyS/FfvcsbvFmvbcWi9n2IovU3bETy4oKN42j0HhLdqfhyWcxpoh6k1ercq8vbY+uehbFYjMUrdsmHnJAxAQQ9bofJ09+lGrPp87L96hqUax0yYW4R61DVomVO1m0gEbi6eRhyMaPyNOSkNyAcn0JikztIuKhtVQujk46cnmQtMaf+1lZbkTuWsbtmf74/hZ/91aG849pX/cHDB1lOIbFqfLX9p7+7Wj8syTDLXKZnYZ0oxfBvH5IociUg0VoXQWfq7ioTcwg+ZPSru19p1X1uuAQAAA==.END",
+  "json": {
+   "v": 4,
+   "scrapedAt": "2026-09-14T12:55:00.000Z",
+   "tz": "America/New_York",
+   "weights": {
+    "MATH 210": 4.2,
+    "Side Project": 2.8
+   },
+   "schedule": [
+    {
+     "c": "MATH 210",
+     "attend": true,
+     "room": "LAB 110",
+     "days": [
+      "Tue",
+      "Thu"
+     ],
+     "start": "13:30",
+     "end": "14:45",
+     "from": "2026-08-25",
+     "until": "2026-12-10"
+    }
+   ],
+   "board": [
+    {
+     "repo": "example-org/example-web",
+     "n": 88,
+     "t": "Empty state for the results list",
+     "kind": "issue",
+     "u": null,
+     "upd": "2026-09-11T19:12:00.000Z"
+    }
+   ],
+   "done": [
+    {
+     "k": "110002::homework::homework 2",
+     "at": "2026-09-13T20:00:00.000Z",
+     "via": "grade"
+    }
+   ],
+   "items": [
+    {
+     "k": "110002::homework::homework 3",
+     "c": "MATH 210",
+     "cid": 110002,
+     "t": "Homework 3 — réduction par lignes",
+     "d": "2026-09-16T03:59:00.000Z",
+     "ty": "homework",
+     "s": null,
+     "src": [
+      "dropbox"
+     ],
+     "desc": "Row reduction and rank.",
+     "u": null
+    }
+   ],
+   "announcements": [
+    {
+     "c": "MATH 210",
+     "t": "Office hours moved to Wednesday",
+     "p": "2026-09-12T18:30:00.000Z"
+    }
+   ],
+   "mail": [
+    {
+     "from": "Dr. A. Mentor",
+     "addr": "a.mentor@example.edu",
+     "subj": "Thursday research meeting",
+     "recv": "2026-09-13T15:20:00.000Z",
+     "tag": "research",
+     "gist": "Which dataset?",
+     "ask": "Pick one",
+     "replyBy": "2026-09-15T20:00:00.000Z"
+    }
+   ],
+   "focus": [
+    {
+     "d": "2026-09-14",
+     "blocks": [
+      {
+       "c": "MATH 210",
+       "what": "Homework 3",
+       "why": "due in 2 days",
+       "t": "19:00",
+       "mins": 90
+      }
+     ]
+    }
+   ],
+   "errors": []
+  }
+ },
+ "corrupt": {
+  "text": "AGD2.49b19cad.H4sIAAAAAAACCo1TXY7TMBi8ijXPbnHSFnW/F+gKJB74E1RawWqF3Phr421iR7azpaxW4hBcgnNwE06CnFK2i3jgzfpiz8w3M7nFDWgqEaugOzaLBEKpyscjdTYqpsuipNmMlBorpT5CIn0BYdFysJV+9Jp3nz74sIXEju2mThF0i1eL5QtRFgo0HZcS761h8Tb4a64SqBzP7zJZzaZvGHR5iwp0/0ZCp8TOgFLoWSJ434LwcnEuiuGz0fsIusSyZ0gs6x5XEjHpkIUXE5rkSwMAiilNZ5BYhwHjsNV8VOZZ75JtjsOiHBUKd1cSK6+DGVQF7jwI/Fm3XcMjHzaPjucdryDhQPO5RKZ93nZpL2LSicXaB5FqFoFj36QoGhsTJLZ2kGRjHHT3INc3jUTfmVPDi2VxRkX5x/CsyXh3MGqbdyqUUiVR7Vve+bC9P4lyMO8UbbIsFSl1Et+N1SBsgjY8YNvEbfwf8Ank30FV1oAOTw42vPhzWfz8+k2EH99NXyXrneh0EI3dOI45wVOJj5dqQrOz04btQTjyQiIerYqhysGb4LuV/5xjNxyzpnd+JwIfubQzImi3Hd/bnDfVzvneVdyyS/FfvcsbvFmvbcWi9n2IovU3bETy4oKN42j0HhLdqfhyWcxpoh6k1ercq8vbY+uehbFYjMUrdsmHnJAxAQQ9bofJ09+lGrPp87L96hqUax0yYW4R61DVomVO1m0gEbi6eRhyMaPyNOSkNyAcn0JikztIuKhtVQujk46cnmQtMaf+1lZbkTuWsbtmf74/hZ/91aG849pX/cHDB1lOIbFqfLX9p7+7Wj8syTDLXKZnYZ0oxfBvH5IociUg0VoXQWfq7iATcwg+ZPSru19p1X1uuAQAAA==.END",
+  "why": "one base64 character flipped; the checksum must reject it"
+ },
+ "truncated": {
+  "text": "AGD2.49b19cad.H4sIAAAAAAACCo1TXY7TMBi8ijXPbnHSFnW/F+gKJB74E1RawWqF3Phr421iR7azpaxW4hBcgnNwE06CnFK2i3jgzfpiz8w3M7nFDWgqEaugOzaLBEKpyscjdTYqpsuipNmMlBorpT5CIn0BYdFysJV+9Jp3nz74sIXEju2mThF0i1eL5QtRFgo0HZcS761h8Tb4a64SqBzP7zJZzaZvGHR5iwp0/0ZCp8TOgFLoWSJ434LwcnEuiuGz0fsIusSyZ0gs6x5XEjHpkIUXE5rkSwMAiilNZ5BYhwHjsNV8VOZZ75JtjsOiHBUKd1cSK6+DGVQF7jwI/Fm3XcMjHzaPjucdryDhQPO5RKZ93nZpL2LSicXaB5FqFoFj36QoGhsTJLZ2kGRjHHT3INc3jUTfmVPDi2VxRkX5x/CsyXh3MGqbdyqUUiVR7Vve+bC9P4lyMO8UbbIsFSl1Et+N1SBsgjY8YNvEbfwf8Ank30FV1oAOTw42vPhzWfz8+k2EH99NXyXrneh0EI3dOI45wVOJj5dqQrOz04btQTjyQiIerYqhysGb4LuV/5xjNxyzpnd+JwIfubQzImi3Hd/bnDfVzvneVdyyS/FfvcsbvFmvbcWi9n2IovU3bETy4oKN42j0HhLdqfhyWcxpoh6k1ercq8vbY+uehbFYjMUrdsmHnJAxAQQ9bofJ09+lGrPp87L96hqUax0yYW4R61DVomVO1m0gEbi6eRhyMaPyNOSkNyAcn0JikztIuKhtVQujk46cnmQtMaf+1lZbkTuWsbtmf74/hZ/91aG849pX/cHDB1lOIbFqfLX9p7+7Wj8syTDLXKZnYZ0oxfBvH5Io.END",
+  "why": "the tail was cut off before .END; the checksum must reject it"
+ }
+}

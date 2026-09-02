@@ -1,0 +1,6 @@
+# Normalize everything to LF in the repository; the two Windows script
+# formats below are the exception - cmd.exe and wscript parse CRLF files,
+# and LF-only batch files hit known edge cases with labels and blocks.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.vbs text eol=crlf

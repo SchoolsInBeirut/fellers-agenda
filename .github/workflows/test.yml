@@ -1,0 +1,79 @@
+name: test
+
+# This workflow uses no secrets, touches no network, and installs nothing.
+# The project has zero runtime dependencies on purpose, so there is nothing to
+# cache and nothing to audit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: data/ must be empty for the suite to be honest
+        shell: bash
+        run: |
+          # Every test reads fixtures/ only. If a test ever starts depending on
+          # a real scrape, this is where it fails, on a clean checkout, loudly.
+          test -f data/.gitkeep
+          test "$(find data -type f ! -name .gitkeep | wc -l)" -eq 0
+
+      - name: run the suite
+        shell: bash
+        # The glob is spelled out and expanded by the shell rather than passing
+        # `test/` to the runner. Node's handling of a bare directory argument
+        # has moved between releases -- on some it globs the directory, on
+        # others it tries to load it as a module and dies with MODULE_NOT_FOUND.
+        # An explicit list works on every version this matrix covers.
+        run: node --test test/*.test.mjs
+
+      - name: demo mode must work with no config and no accounts
+        run: node scripts/demo.mjs
+
+      - name: preflight must not throw on a bare checkout
+        shell: bash
+        # It is allowed to report failures (there is no config.json here); it is
+        # not allowed to crash. A preflight that dies on the machine it was
+        # written to diagnose is worse than no preflight.
+        run: node scripts/validate-setup.mjs || true
+
+      - name: the re-auth probe never starts a login
+        shell: bash
+        # --probe is documented everywhere as the safe diagnostic that sends no
+        # credentials. There is no config.json here, so it has nothing to reach
+        # for and must still exit 0 with a report. If it ever tries to log in,
+        # this step hangs until the job times out, which is the loud failure the
+        # silent one deserves.
+        run: |
+          node scripts/reauth.mjs --probe --data "$RUNNER_TEMP/probe"
+          test -f "$RUNNER_TEMP/probe/auth-probe.json"
+          ! grep -qi "browser window" "$RUNNER_TEMP/probe/auth-probe.json"
+
+      - name: an unknown flag is refused rather than run
+        shell: bash
+        run: |
+          set +e
+          node scripts/reauth.mjs --definitely-not-a-flag
+          test "$?" -eq 4
+
+      - name: connector health check runs with nothing configured
+        run: node scripts/health-check.mjs

@@ -1,0 +1,67 @@
+{
+ "board": [
+  {
+   "repo": "example-org/example-api",
+   "n": 214,
+   "t": "Rate-limit the public search endpoint",
+   "kind": "issue",
+   "u": "https://example.invalid/example-org/example-api/issues/214",
+   "upd": "2026-09-13T16:40:00.000Z"
+  },
+  {
+   "repo": "example-org/example-api",
+   "n": 219,
+   "t": "Add a health check to the worker",
+   "kind": "issue",
+   "u": "https://example.invalid/example-org/example-api/issues/219",
+   "upd": "2026-09-12T11:05:00.000Z"
+  },
+  {
+   "repo": "example-org/example-api",
+   "n": 221,
+   "t": "Move the seed script off the prod config",
+   "kind": "pr",
+   "u": "https://example.invalid/example-org/example-api/pull/221",
+   "upd": "2026-09-14T08:20:00.000Z"
+  },
+  {
+   "repo": "example-org/example-web",
+   "n": 88,
+   "t": "Empty state for the results list",
+   "kind": "issue",
+   "u": "https://example.invalid/example-org/example-web/issues/88",
+   "upd": "2026-09-11T19:12:00.000Z"
+  },
+  {
+   "repo": "example-org/example-web",
+   "n": 91,
+   "t": "Keyboard focus trap in the filter drawer",
+   "kind": "issue",
+   "u": "https://example.invalid/example-org/example-web/issues/91",
+   "upd": "2026-09-13T07:55:00.000Z"
+  },
+  {
+   "repo": "example-org/example-web",
+   "n": 93,
+   "t": "Upgrade the build to the new toolchain",
+   "kind": "pr",
+   "u": "https://example.invalid/example-org/example-web/pull/93",
+   "upd": "2026-09-10T13:30:00.000Z"
+  }
+ ],
+ "items": [
+  {
+   "courseId": 0,
+   "course": "Side Project",
+   "title": "Ship the example-api v0.4 milestone",
+   "due": "2026-09-20T22:00:00.000Z",
+   "type": "task",
+   "sources": [
+    "board-github"
+   ],
+   "submitted": null,
+   "approx": false,
+   "url": "https://example.invalid/example-org/example-api/milestone/4"
+  }
+ ]
+}

@@ -1,0 +1,178 @@
+{
+  "_comment": "A complete, fictional term. scripts/demo.mjs renders the whole agenda from this file plus fixtures/demo/data/, with no accounts, no connectors and no config.json of your own. Keys beginning with _ or // are ignored by the loader, so this note is legal JSON that the pipeline will not read.",
+
+  "namespace": "agenda",
+  "title": "Weekly Agenda",
+  "timezone": "America/New_York",
+  "wakeTime": "10:00",
+
+  "institution": {
+    "name": "Example University",
+    "lmsHost": "lms.example.edu",
+    "mailDomains": ["example.edu"]
+  },
+
+  "courses": [
+    { "id": 110001, "code": "PHYS 221", "name": "Classical Mechanics" },
+    { "id": 110002, "code": "MATH 210", "name": "Linear Algebra" },
+    { "id": 110003, "code": "CHEM 115", "name": "General Chemistry" },
+    { "id": 110004, "code": "HIST 140", "name": "Modern World History" },
+    { "id": 110006, "code": "SEM 100", "name": "Department Seminar", "skip": true }
+  ],
+
+  "difficulty": {
+    "PHYS 221": 5,
+    "MATH 210": 4,
+    "CHEM 115": 4,
+    "HIST 140": 3,
+    "SEM 100": 0,
+    "Research": 3,
+    "Mail": 2
+  },
+
+  "schedule": {
+    "PHYS 221": {
+      "room": "HALL 101",
+      "attend": false,
+      "from": "2026-08-25",
+      "until": "2026-12-10",
+      "meets": [{ "days": ["Tue", "Thu"], "start": "09:00", "end": "10:15" }]
+    },
+    "MATH 210": {
+      "room": "LAB 110",
+      "attend": true,
+      "from": "2026-08-25",
+      "until": "2026-12-10",
+      "meets": [{ "days": ["Tue", "Thu"], "start": "13:30", "end": "14:45" }]
+    },
+    "CHEM 115": {
+      "room": "SCI 105",
+      "attend": true,
+      "from": "2026-08-24",
+      "until": "2026-12-09",
+      "meets": [
+        { "days": ["Mon", "Wed"], "start": "11:00", "end": "12:15" },
+        { "days": ["Fri"], "start": "13:00", "end": "15:50" }
+      ]
+    },
+    "HIST 140": {
+      "room": "WEST 118",
+      "attend": false,
+      "from": "2026-08-24",
+      "until": "2026-12-09",
+      "meets": [{ "days": ["Mon", "Wed"], "start": "16:30", "end": "17:45" }]
+    }
+  },
+
+  "studyMinutes": {
+    "weekday": 240,
+    "weekend": 300,
+    "weekdayWindow": ["10:30", "23:00"],
+    "weekendWindow": ["10:30", "22:00"]
+  },
+
+  "leadTimeDays": {
+    "exam": 7,
+    "project": 5,
+    "lab": 5,
+    "homework": 3,
+    "quiz": 2,
+    "default": 3
+  },
+
+  "focus": {
+    "tuning": {
+      "maxBlocksPerDay": 3,
+      "blockStepMinutes": 15,
+      "breakMinutes": 15,
+      "minBlockMinutes": 30,
+      "maxBlockMinutes": 150,
+      "dayStart": "08:00",
+      "dayEnd": "23:00"
+    }
+  },
+
+  "scrapeWindowDays": 60,
+  "announcementLookbackDays": 14,
+
+  "standardsPlan": {
+    "enabled": true,
+    "course": "PHYS 221",
+    "label": "Standards"
+  },
+
+  "sideProject": {
+    "enabled": true,
+    "label": "Side Project",
+    "provider": "github",
+    "org": "example-org",
+    "repos": ["example-api", "example-web"],
+    "minDailyMinutes": 60,
+    "maxDailyMinutes": 180
+  },
+
+  "connectors": {
+    "lms": {
+      "brightspace": {
+        "enabled": false,
+        "mcpServer": "brightspace",
+        "package": "brightspace-mcp-server@latest"
+      },
+      "canvas": { "enabled": false, "baseUrl": "", "token": "", "courseFilter": [] }
+    },
+    "mail": {
+      "outlook": {
+        "enabled": false,
+        "sentItemsScan": true,
+        "windowDays": 14,
+        "noiseDomains": ["news.example.edu", "events.example.edu"],
+        "noiseLocalParts": ["newsletter", "no-reply", "digest"]
+      }
+    },
+    "calendar": {
+      "outlook": { "enabled": false, "category": "Agenda", "horizonDays": 21, "maxEvents": 60 },
+      "ics": { "enabled": false, "path": "data/agenda.ics" }
+    },
+    "board": {
+      "github": { "enabled": false, "budgetMs": 60000 }
+    },
+    "grades": {
+      "gradescope": { "enabled": false, "python": "python", "termLabel": "Fall 2026" }
+    },
+    "materials": {
+      "enabled": false,
+      "root": "",
+      "categories": ["Syllabus", "Lecture Notes", "Example Problems", "Homework", "Books", "Exams", "Other"],
+      "maxFileMB": 300
+    }
+  },
+
+  "drive": {
+    "enabled": false,
+    "connectorName": "Google Drive",
+    "maxEmitChars": 12000,
+    "maxMirrorChars": 20000,
+    "mirror": false
+  },
+
+  "artifact": { "url": "" },
+
+  "notifications": {
+    "calendar": false,
+    "emailDigest": "off",
+    "digestTo": "",
+    "push": { "newAssignments": true, "dueSoonUnsubmittedHours": 48 }
+  },
+
+  "scheduler": {
+    "taskPrefix": "Agenda",
+    "morningAt": "07:03",
+    "eveningAt": "18:07",
+    "quietUntil": "07:23",
+    "syncWindow": ["09:00", "23:00"],
+    "syncGapHours": 3,
+    "graceMinutes": 20,
+    "debounceMinutes": 25,
+    "maxRescuesPerLane": 2
+  }
+}

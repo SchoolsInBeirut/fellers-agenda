@@ -1,0 +1,37 @@
+{
+  "name": "fellers-agenda",
+  "version": "1.0.0",
+  "description": "A weekly agenda that builds itself: scrape your LMS, plan the week, render one self-contained page.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "node scripts/demo.mjs",
+    "scrape": "node src/scrape.mjs",
+    "render": "node src/render.mjs",
+    "doctor": "node scripts/validate-setup.mjs",
+    "health": "node scripts/health-check.mjs"
+  },
+  "keywords": [
+    "agenda",
+    "brightspace",
+    "canvas",
+    "lms",
+    "mcp",
+    "claude-code",
+    "student",
+    "planner"
+  ],
+  "files": [
+    "src",
+    "web",
+    "scripts",
+    "runbooks",
+    "fixtures",
+    "docs"
+  ]
+}

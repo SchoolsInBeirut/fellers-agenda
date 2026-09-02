@@ -1,0 +1,20 @@
+version: 2
+
+# There is no npm ecosystem entry here on purpose: this project has ZERO runtime
+# dependencies and no lockfile, so there is nothing for Dependabot to bump.
+# The only versioned things in the repo are the GitHub Actions in
+# .github/workflows/, and those are worth keeping current.
+#
+# The optional Gradescope extra pins gradescopeapi in
+# extras/gradescope/requirements.txt. It is deliberately NOT watched here: that
+# extra ships disabled, is never installed unless a user opts in, and an
+# automatic bump to a scraping library is a change we want a human to read.
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"

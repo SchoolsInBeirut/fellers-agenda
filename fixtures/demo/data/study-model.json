@@ -1,0 +1,144 @@
+{
+ "updated": "2026-09-14T12:56:00.000Z",
+ "today": "2026-09-14",
+ "courses": {
+  "PHYS 221": {
+   "prior": 5,
+   "gradeSignal": 90,
+   "gradedItems": 2,
+   "backlog": 4,
+   "examDays": 3,
+   "paceMinsPerTask": 95,
+   "loggedMins": 0,
+   "alloc": 4.8,
+   "evidence": [
+    "prior 5",
+    "assessment in 3d +0.5",
+    "grades 90% -0.2",
+    "alloc 5.3 -> 4.8"
+   ]
+  },
+  "MATH 210": {
+   "prior": 4,
+   "gradeSignal": 95,
+   "gradedItems": 1,
+   "backlog": 4,
+   "examDays": 15,
+   "paceMinsPerTask": 70,
+   "loggedMins": 0,
+   "alloc": 4.2,
+   "evidence": [
+    "prior 4",
+    "backlog 4 +0.2",
+    "alloc 4.2 -> 4.2"
+   ]
+  },
+  "CHEM 115": {
+   "prior": 4,
+   "gradeSignal": 88,
+   "gradedItems": 1,
+   "backlog": 5,
+   "examDays": 10,
+   "paceMinsPerTask": 80,
+   "loggedMins": 0,
+   "alloc": 4.5,
+   "evidence": [
+    "prior 4",
+    "backlog 5 +0.5",
+    "alloc 4.5 -> 4.5"
+   ]
+  },
+  "HIST 140": {
+   "prior": 3,
+   "gradeSignal": null,
+   "gradedItems": 0,
+   "backlog": 4,
+   "examDays": null,
+   "paceMinsPerTask": 60,
+   "loggedMins": 0,
+   "alloc": 3.4,
+   "evidence": [
+    "prior 3",
+    "not attended +0.4",
+    "alloc 3.4 -> 3.4"
+   ]
+  },
+  "Side Project": {
+   "prior": 3,
+   "gradeSignal": null,
+   "gradedItems": 0,
+   "backlog": 6,
+   "examDays": null,
+   "paceMinsPerTask": null,
+   "loggedMins": 0,
+   "alloc": 2.8,
+   "evidence": [
+    "prior 3",
+    "board has 6 open entries +0.3",
+    "idle -0.5",
+    "alloc 2.8 -> 2.8"
+   ]
+  },
+  "Research": {
+   "prior": 3,
+   "gradeSignal": null,
+   "gradedItems": 0,
+   "backlog": 1,
+   "examDays": null,
+   "paceMinsPerTask": null,
+   "loggedMins": 0,
+   "alloc": 2.5,
+   "evidence": [
+    "prior 3",
+    "alloc 2.5 -> 2.5"
+   ]
+  },
+  "Mail": {
+   "prior": 2,
+   "gradeSignal": null,
+   "gradedItems": 0,
+   "backlog": 2,
+   "examDays": null,
+   "paceMinsPerTask": null,
+   "loggedMins": 0,
+   "alloc": 1.8,
+   "evidence": [
+    "prior 2",
+    "alloc 1.8 -> 1.8"
+   ]
+  },
+  "SEM 100": {
+   "prior": 0,
+   "gradeSignal": null,
+   "gradedItems": 0,
+   "backlog": 0,
+   "examDays": null,
+   "paceMinsPerTask": null,
+   "loggedMins": 0,
+   "alloc": 0,
+   "evidence": [
+    "prior 0 is a veto"
+   ]
+  }
+ },
+ "history": [
+  {
+   "at": "2026-09-07T12:56:00.000Z",
+   "allocs": {
+    "PHYS 221": 4.5,
+    "MATH 210": 4,
+    "CHEM 115": 4.2,
+    "HIST 140": 3.2
+   }
+  },
+  {
+   "at": "2026-09-14T12:56:00.000Z",
+   "allocs": {
+    "PHYS 221": 4.8,
+    "MATH 210": 4.2,
+    "CHEM 115": 4.5,
+    "HIST 140": 3.4
+   }
+  }
+ ]
+}

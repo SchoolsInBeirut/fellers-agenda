@@ -1,0 +1,15 @@
+{
+  "mcp": {
+    "servers": [
+      {
+        "server": "claude_ai_Google_Drive",
+        "tools": [
+          "search_files",
+          "read_file_content",
+          "create_file"
+        ]
+      }
+    ]
+  },
+  "sample": {}
+}

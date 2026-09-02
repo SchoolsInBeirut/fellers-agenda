@@ -1,0 +1,98 @@
+[
+  {
+    "id": 900101,
+    "name": "Homework 3",
+    "due_at": "2026-09-16T03:59:00Z",
+    "html_url": "https://canvas.example.edu/courses/110002/assignments/900101",
+    "points_possible": 20,
+    "submission_types": ["online_upload"],
+    "submission": {
+      "id": 5001,
+      "attempt": null,
+      "submitted_at": null,
+      "score": null,
+      "grade": null,
+      "workflow_state": "unsubmitted",
+      "missing": false,
+      "late": false,
+      "excused": false
+    }
+  },
+  {
+    "id": 900102,
+    "name": "Homework 2",
+    "due_at": "2026-09-09T03:59:00Z",
+    "html_url": "https://canvas.example.edu/courses/110002/assignments/900102",
+    "points_possible": 20,
+    "submission_types": ["online_upload"],
+    "submission": {
+      "id": 5002,
+      "attempt": 1,
+      "submitted_at": "2026-09-08T22:14:03Z",
+      "score": 18,
+      "grade": "18",
+      "workflow_state": "graded",
+      "missing": false,
+      "late": false,
+      "excused": false
+    }
+  },
+  {
+    "id": 900103,
+    "name": "Quiz 4: row reduction",
+    "due_at": "2026-09-18T16:00:00Z",
+    "html_url": "https://canvas.example.edu/courses/110002/assignments/900103",
+    "points_possible": 10,
+    "submission_types": ["online_quiz"],
+    "quiz_id": 7701,
+    "submission": {
+      "id": 5003,
+      "attempt": null,
+      "submitted_at": null,
+      "score": null,
+      "grade": null,
+      "workflow_state": "unsubmitted",
+      "missing": false,
+      "late": false,
+      "excused": false
+    }
+  },
+  {
+    "id": 900104,
+    "name": "Participation (no deadline)",
+    "due_at": null,
+    "html_url": "https://canvas.example.edu/courses/110002/assignments/900104",
+    "points_possible": 5,
+    "submission_types": ["none"],
+    "submission": {
+      "id": 5004,
+      "attempt": null,
+      "submitted_at": null,
+      "score": null,
+      "grade": null,
+      "workflow_state": "unsubmitted",
+      "missing": false,
+      "late": false,
+      "excused": false
+    }
+  },
+  {
+    "id": 900105,
+    "name": "Homework 1",
+    "due_at": "2026-09-02T03:59:00Z",
+    "html_url": "https://canvas.example.edu/courses/110002/assignments/900105",
+    "points_possible": 20,
+    "submission_types": ["online_upload"],
+    "submission": {
+      "id": 5005,
+      "attempt": null,
+      "submitted_at": null,
+      "score": 0,
+      "grade": "0",
+      "workflow_state": "graded",
+      "missing": true,
+      "late": true,
+      "excused": false
+    }
+  }
+]

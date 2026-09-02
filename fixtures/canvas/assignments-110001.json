@@ -1,0 +1,29 @@
+[
+  {
+    "id": 900201,
+    "name": "Midterm Exam 1",
+    "due_at": "2026-09-24T18:30:00Z",
+    "html_url": "https://canvas.example.edu/courses/110001/assignments/900201",
+    "points_possible": 100,
+    "submission_types": ["on_paper"],
+    "submission": {
+      "id": 6001,
+      "attempt": null,
+      "submitted_at": null,
+      "score": null,
+      "grade": null,
+      "workflow_state": "unsubmitted",
+      "missing": false,
+      "late": false,
+      "excused": false
+    }
+  },
+  {
+    "id": 900202,
+    "name": "Lab 2 report",
+    "due_at": "not a date",
+    "html_url": "https://canvas.example.edu/courses/110001/assignments/900202",
+    "points_possible": 30,
+    "submission_types": ["online_upload"]
+  }
+]

@@ -1,0 +1,16 @@
+# The one Python dependency of gradescope.py.
+#
+# Nothing installs from this file automatically. It is a RECORD of the version
+# the adapter was validated against, and the one deliberate place to change it,
+# so an upgrade is always a decision rather than a side effect.
+#
+# The upstream library parses Gradescope's HTML, and Gradescope changes its
+# markup. Upstream ships drift fixes roughly quarterly. So when the
+# empty-result canary in gradescope.py trips ("<code> went N -> 0
+# assignments"), check the releases page FIRST:
+#   https://github.com/nyuoss/gradescope-api/releases
+# A newer release with a parsing fix is the usual cause, and bumping the pin
+# here is usually the whole repair.
+#
+#   python -m pip install -r extras/gradescope/requirements.txt
+gradescopeapi==1.8.1

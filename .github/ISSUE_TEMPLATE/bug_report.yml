@@ -1,0 +1,114 @@
+name: Bug report
+description: Something in the pipeline, the page or the setup does not work.
+title: "[bug] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you fill this in, two things that solve most reports:
+
+        1. `node scripts/validate-setup.mjs` — the preflight prints a fix link
+           for every failure.
+        2. [`docs/TROUBLESHOOTING.md`](../blob/main/docs/TROUBLESHOOTING.md) —
+           symptom → cause → fix.
+
+        **Please redact.** No email addresses, no real course names, no
+        professor names, no Drive document ids, no tokens, no
+        `C:\Users\<your name>` paths. The status tokens are what we actually
+        need and they carry nothing private.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        I said /agenda-now. It printed "upload: 6,712 chars (budget 12,000, tier 1)"
+        and then the page still showed yesterday's week.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Cowork (cloud)
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: "`node --version`"
+      placeholder: v22.11.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connectors
+    attributes:
+      label: Which connectors are enabled
+      description: From `config.json` → `connectors`. Tick every one set to `true`.
+      multiple: true
+      options:
+        - lms.brightspace
+        - lms.canvas
+        - mail.outlook
+        - calendar.outlook
+        - calendar.ics
+        - board.github
+        - grades.gradescope
+        - materials
+        - drive
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where does it break
+      options:
+        - Setup / onboarding (before the first real run)
+        - Demo mode (node scripts/demo.mjs)
+        - Scraping (node src/scrape.mjs)
+        - Rendering (node src/render.mjs)
+        - The Drive upload
+        - The published page in the browser
+        - Marks or commands coming back from the page
+        - Scheduling (a run that should have happened and did not)
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Redacted log excerpt
+      description: >-
+        The last few lines of terminal output, or one line from
+        `data/runlog.txt`. Replace anything identifying with `<redacted>`.
+      render: text
+      placeholder: |
+        2026-09-02T18:07:11Z items=31 new=2 render=ok drive=FAILED(create rejected) mirror=ok(19KB) behind=notice(B3) deadman=armed push=0
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I ran `node scripts/validate-setup.mjs` and it did not explain this.
+          required: true
+        - label: I checked `docs/TROUBLESHOOTING.md`.
+          required: true
+        - label: I have redacted names, emails, course titles, document ids and paths.
+          required: true

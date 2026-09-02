@@ -1,0 +1,94 @@
+name: Connector request
+description: You want the agenda to read from a source it does not support yet.
+title: "[connector] "
+labels: ["connector", "enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every source in this project is a swappable adapter, and adding one is
+        seven steps — see
+        [`docs/EXTENDING.md`](../blob/main/docs/EXTENDING.md). If you are able
+        to write it yourself, a pull request will land much faster than an
+        issue, and your Claude agent can do most of it from `/add-source`.
+
+        **Please read
+        [`docs/connectors/not-supported.md`](../blob/main/docs/connectors/not-supported.md)
+        first.** Some platforms genuinely have no viable general-purpose
+        server, and that page says which ones and why. A request for one of
+        those will be closed with a link back to it — not because it is a bad
+        idea, but because there is nothing to build against.
+
+  - type: input
+    id: source
+    attributes:
+      label: What is the source
+      placeholder: "Moodle / Notion / Todoist / Apple Calendar / my university's own portal"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which slot would it fill
+      description: The adapter contract has five kinds. Pick the closest.
+      options:
+        - "lms — assignments, content, announcements, grades"
+        - "mail — messages that carry deadlines or asks"
+        - "calendar-sink — writes deadlines out to a calendar"
+        - "board — non-course work that competes for the same hours"
+        - "grades — an external grading service"
+        - "something else — course files, or a slot that does not exist yet"
+    validations:
+      required: true
+
+  - type: textarea
+    id: server
+    attributes:
+      label: Is there an MCP server for it
+      description: >-
+        A link to one that exists and that you have actually seen work. Say so
+        honestly if you have not tried it — an untested link is still useful,
+        it is just not evidence.
+      placeholder: |
+        https://mcp.notion.com/mcp — hosted, OAuth, I connected it and it lists my pages.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which tier does it look like
+      options:
+        - "Tier 1 — hosted OAuth, one command, nothing to install"
+        - "Tier 2 — a local server plus a token"
+        - "Tier 3 — needs an institutional admin, or has no server at all"
+        - "I do not know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What would it emit
+      description: >-
+        Which of the emission shapes in `docs/EXTENDING.md` would this produce,
+        and can it tell the difference between "not submitted" and "I could not
+        tell"? That last question is the one that decides whether a connector is
+        safe to build — see `docs/design-notes/data-truth.md`.
+      placeholder: |
+        Items. It gives a due date and a status column that says "Submitted",
+        "No Submission" or is blank. Blank would map to null, never false.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to build it
+      options:
+        - label: I would like to try, with `/add-source` and `docs/EXTENDING.md`.
+          required: false
+        - label: I can test a connector someone else writes, against a real account.
+          required: false

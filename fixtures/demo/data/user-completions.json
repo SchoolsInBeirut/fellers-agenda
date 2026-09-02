@@ -1,0 +1,31 @@
+{
+ "completions": {
+  "110001::homework::problem set 3": {
+   "at": "2026-09-13T22:10:00.000Z",
+   "via": "user"
+  },
+  "fb|2026-09-13|MATH 210": {
+   "at": "2026-09-13T20:00:00.000Z",
+   "via": "user"
+  },
+  "110004::homework::reading journal week 4": {
+   "at": "2026-09-14T01:20:00.000Z",
+   "via": "user"
+  },
+  "110003::other::safety module": {
+   "at": "2026-09-13T18:00:00.000Z",
+   "via": "user",
+   "state": "cancelled"
+  },
+  "110002::quiz::quiz 4": {
+   "at": "2026-09-12T10:00:00.000Z",
+   "via": "user"
+  }
+ },
+ "cleared": {
+  "110002::quiz::quiz 4": {
+   "at": "2026-09-14T02:00:00.000Z",
+   "via": "user"
+  }
+ }
+}
