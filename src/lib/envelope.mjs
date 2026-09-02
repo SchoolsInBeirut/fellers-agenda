@@ -115,6 +115,10 @@ export function pack(kind, obj, opts = {}) {
     return `${prefix}1.${Buffer.from(json, "utf-8").toString("base64")}.END`;
   }
   const gz = gzipSync(Buffer.from(json, "utf-8"), { level: 9 });
+  // Byte 9 of a gzip header records the OS that produced it, so the same
+  // payload would differ between Windows and Linux. Pin it (0x03, the de facto
+  // standard) so pack() is byte-identical everywhere; no reader looks at it.
+  gz[9] = 0x03;
   return `${prefix}2.${crc32(gz)}.${gz.toString("base64")}.END`;
 }
 
