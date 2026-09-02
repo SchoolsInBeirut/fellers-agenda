@@ -747,13 +747,14 @@ test("the contract's numbers are the ones in the file", () => {
 
 // --- config-driven names and boundaries -----------------------------------
 
-test("a custom taskPrefix renames all four scheduled tasks together", () => {
+test("a custom taskPrefix renames all five scheduled tasks together", () => {
   const cfg = { scheduler: { taskPrefix: "Weekly" } };
   assert.deepEqual(derive(cfg).taskNames, {
     morning: "Weekly Morning",
     evening: "Weekly Evening",
     sync: "Weekly Sync",
     staleCheck: "Weekly StaleCheck",
+    authRetry: "Weekly AuthRetry",
   });
   assert.deepEqual(laneTasks(cfg), {
     morning: "Weekly Morning",

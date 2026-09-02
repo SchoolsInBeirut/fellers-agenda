@@ -404,7 +404,7 @@ un-ignorable, and "stop nagging me" is not "let me miss my exam".
 
 | Key | What it does |
 |---|---|
-| `taskPrefix` | Task names become `<prefix> Morning`, `<prefix> Evening`, `<prefix> Sync`, `<prefix> StaleCheck` |
+| `taskPrefix` | Task names become `<prefix> Morning`, `<prefix> Evening`, `<prefix> Sync`, `<prefix> StaleCheck`, `<prefix> AuthRetry` |
 | `morningAt` / `eveningAt` | When the two heavy runs fire. The odd minutes are deliberate — round times are congested |
 | `quietUntil` | The heavy lane never fires between midnight and this time. A full run at 03:00 can send mail |
 | `syncWindow` / `syncGapHours` | When the light lane runs, and how long a gap counts as "gone quiet" |
@@ -417,6 +417,92 @@ and re-asserts every task. **Do not edit a task by hand in the Task Scheduler
 UI**, because the next run of the installer will assert it back.
 
 macOS and Linux scheduling is in `docs/SCHEDULING.md`.
+
+---
+
+## `authRetry` — the hourly "can we still log in?" lane
+
+```jsonc
+"authRetry": {
+  "enabled": true,
+  "sessionFiles": [".brightspace-mcp/session.json", ".d2l-session/session.json"],
+  "minIntervalMinutes": 50,
+  "pushHook": "[NOT SET]"
+}
+```
+
+| Key | What it does |
+|---|---|
+| `enabled` | `false` switches the lane off entirely. It then reports `lane-disabled` and touches nothing. The scheduled task can stay registered |
+| `sessionFiles` | Paths **relative to your home directory** that the LMS auth CLI mints a session into. The first one that exists is read; only `createdAt`, `expiresAt` and the file's mtime are ever looked at. **An empty list opts the lane out** — see below |
+| `minIntervalMinutes` | The floor between two login ATTEMPTS. Default 50, against an hourly tick, so it never blocks the intended cadence — it collapses a burst (logon + unlock + resume + the hourly tick can all land in one second) into one fire |
+| `pushHook` | Optional path to a script run when a number-matching prompt appears. Relative paths resolve against the repo root. Unset means the platform default: `data/push-hook.cmd` on Windows, `data/push-hook.sh` elsewhere |
+
+### Why an empty `sessionFiles` is an opt-out, not a bug
+
+Without a session file this lane cannot tell "the token expired" from "nobody
+ever logged in". It would land on `no-session` every hour, forever, firing
+logins that nothing asked for. So a connector that keeps no readable session file
+must opt **out**: set `"sessionFiles": []` and the lane reports
+`no-session-source` and stays quiet. Canvas is the shipped example — it
+authenticates with a token in `config.json` and has no session to expire.
+
+### The push hook, and what to put in it
+
+When the school's second factor is **number matching**, the sign-in page renders
+a short number that the user has to type into their authenticator app within
+about 60-90 seconds. A headless login raises that prompt where nobody can see it,
+so the lane relays the number the instant it appears, over three channels:
+
+1. `data/auth-mfa.json` — always, first, because it cannot fail.
+2. An on-screen alert on the machine itself — a `WScript.Shell` popup on Windows,
+   `osascript` on macOS, `notify-send` on Linux. No network, no configuration.
+3. **The push hook, if you wrote one.** This is the seam for a real *phone*
+   notification, and it is the only channel that reaches you when you are not at
+   the machine.
+
+The hook is run detached with the message as `%1` / `$1` and the number as
+`%2` / `$2`. It must return immediately — the login is sitting in a
+ninety-second window and nothing may block it.
+
+**The recommended implementation is one line**, because the Claude mobile app is
+already a push channel this repository's runbooks are granted:
+
+`data/push-hook.cmd` (Windows):
+
+```bat
+@echo off
+start "" /b claude -p "Send a push notification with exactly this text: %~1" --allowedTools PushNotification
+```
+
+`data/push-hook.sh` (macOS / Linux, `chmod +x`):
+
+```sh
+#!/bin/sh
+claude -p "Send a push notification with exactly this text: $1" --allowedTools PushNotification &
+```
+
+That delivers *"Agenda login: enter 42 in your authenticator app"* to the phone
+you already have Claude on, with no account to create and no provider to trust.
+
+**Be honest with yourself about the latency.** Starting a `claude -p` session is
+not instant, and the prompt is only good for about ninety seconds, so this hook
+is a real improvement over nothing and is **not** a guarantee. If you want the
+fastest possible path, a two-line `curl` to [ntfy](https://ntfy.sh) or Pushover
+from the same hook arrives in under a second:
+
+```sh
+#!/bin/sh
+curl -fsS -d "$1" https://ntfy.sh/your-private-topic-name >/dev/null 2>&1 &
+```
+
+Nothing in this repository hard-codes a provider, and `data/` is git-ignored, so
+whatever you put in the hook stays on your machine.
+
+**If the number never arrives at all**, the capture selector in
+`vendor/brightspace-mcp-server/entra-duo-sso.patch` is the place to look —
+`docs/TROUBLESHOOTING.md` has the procedure, and that selector is flagged
+unverified in production for a reason.
 
 ---
 

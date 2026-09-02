@@ -492,9 +492,9 @@ follow-up pitch.
   re-verify. Never run either of these from a tool call: it hangs or reads
   end-of-file, and the user sees a frozen session.
 - **Scheduling.** On Windows: `scripts\install-tasks.cmd`, which creates and
-  repairs all four scheduled tasks and is safe to run repeatedly. On macOS or
+  repairs all five scheduled tasks and is safe to run repeatedly. On macOS or
   Linux there is no installer, so **you write the files for them** — generate
-  the `launchd` plists or the crontab block from `docs/SCHEDULING.md`,
+  the three `launchd` plists or the crontab block from `docs/SCHEDULING.md`,
   substituting the real repository path, show them the file you wrote, and give
   them the one `launchctl load` or `crontab -e` line. Do not paste a template
   with `$HOME/my-agenda` in it and leave them to substitute. In Cowork: cloud

@@ -1,14 +1,15 @@
 # Scheduling: making it run by itself
 
 An agenda you have to remember to run is a to-do list with extra steps. This page
-sets up the two lanes so they run without you.
+sets up the two run lanes — and the two watchdogs that notice when one of them
+did not happen, or could not log in — so they run without you.
 
 **You can skip this entirely.** `/agenda-now` on demand works perfectly well, and
 plenty of people run it that way for a term before automating anything.
 
 ---
 
-## The four tasks
+## The five tasks
 
 | Task | What it runs | When |
 |---|---|---|
@@ -16,8 +17,21 @@ plenty of people run it that way for a term before automating anything.
 | `<prefix> Evening` | `runbooks/heavy-run.md` | Daily at `scheduler.eveningAt` (18:07) |
 | `<prefix> Sync` | `runbooks/sync-run.md` | Every 2 h inside `scheduler.syncWindow` |
 | `<prefix> StaleCheck` | `src/stale-check.mjs` | Logon, unlock, resume, and every 30 min |
+| `<prefix> AuthRetry` | `src/auth-retry.mjs` | Logon, unlock, resume, and every hour |
 
 `<prefix>` is `config.json` → `scheduler.taskPrefix`, default `Agenda`.
+
+**The last two are watchdogs, and they ask different questions.** StaleCheck asks
+*"was a run supposed to have happened by now?"*. AuthRetry asks *"can we still log
+in?"*. A run that fires on time, scrapes, hits an expired session and exits 2 *has
+happened* — so StaleCheck is right to stay silent, and no amount of tuning it
+would catch that. AuthRetry is the lane that does.
+
+AuthRetry is free on a healthy machine: it fires a login only when there is no
+session file at all, or when the session is unusable **and** the last thing that
+happened was a failure. An expired session with nothing outstanding is the
+pipeline's normal resting state between runs, and it is left alone. See
+`docs/design-notes/auth-hardening.md` for the whole decision table.
 
 The odd minutes are deliberate. Round times are congested on a Windows desktop —
 backup software, update checks and antivirus scans all fire at :00 — and a run
@@ -37,7 +51,7 @@ That is the whole thing. It:
 - **verifies every target file exists before registering anything** — `schtasks`
   does not do this, which is why a task can look installed for a month while
   executing nothing
-- registers all four with the right triggers and settings
+- registers all five with the right triggers and settings
 - prints what it did and what is now scheduled
 - **never runs a task**, and never deletes one you did not ask it to replace
 
@@ -57,14 +71,15 @@ your config back over it, and then you have two sources of truth that disagree.
 
 ### Settings the installer sets, and why
 
-| Setting | Heavy runs | Sync | Watchdog |
-|---|---|---|---|
-| Start when available | **yes** | yes | yes |
-| Wake the computer | **yes** | no | **no** |
-| Time limit | 2 h | 30 min | 5 min |
-| Restart on failure | 3× / 10 min | no | no |
-| Multiple instances | ignore new | ignore new | ignore new |
-| Run on battery | yes | yes | yes |
+| Setting | Heavy runs | Sync | StaleCheck | AuthRetry |
+|---|---|---|---|---|
+| Start when available | **yes** | yes | yes | yes |
+| Wake the computer | **yes** | no | **no** | **no** |
+| Time limit | 2 h | 30 min | 5 min | 15 min |
+| Restart on failure | 3× / 10 min | no | no | no |
+| Multiple instances | ignore new | ignore new | ignore new | ignore new |
+| Run on battery | yes | yes | yes | yes |
+| Repeats | — | every 2 h | every 30 min from 00:05 | every hour from 00:04 |
 
 - **Start when available** is the important one. Without it, a run missed because
   the laptop was closed is simply *lost*, with no digest that day and nothing to
@@ -78,6 +93,16 @@ your config back over it, and then you have two sources of truth that disagree.
 - **No restart for the sync lane.** The next fire is only two hours away, and a
   retry storm on a run that may push a notification is worse than one skipped
   sync.
+- **AuthRetry never wakes the machine, and that is the point.** Its login can
+  raise a two-factor prompt, and firing one at a sleeping user's phone is the
+  failure it exists to prevent, not a feature. The logon/unlock/resume triggers
+  cover the lid opening in the morning, which is when the prompt can actually be
+  answered.
+- **AuthRetry ticks at :04, not :05,** so the two watchdogs do not fire in
+  lockstep on the same waking second.
+- **Fifteen minutes for AuthRetry** rather than the watchdog's five: on the rare
+  tick where it fires it is waiting on a real login. `src/auth-retry.mjs` caps its
+  own child at seven minutes, so the task limit is only the outer wall.
 
 ### Seeing why a task did not fire
 
@@ -156,11 +181,45 @@ full, rather than described:
 The sync lane's tool list is deliberately **smaller**: it never scrapes, so it
 has no reason to be able to reach the LMS or a mailbox.
 
-Then load both and check:
+The third is `~/Library/LaunchAgents/com.agenda.auth.plist` — the auth lane.
+It runs a plain Node script, not an agent session, so it needs no tools and no
+allow-list at all:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.agenda.auth</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd "$HOME/my-agenda" &amp;&amp; node src/auth-retry.mjs</string>
+  </array>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+```
+
+`RunAtLoad` is **true** here and false on the other two: this lane is nearly
+always a silent no-op, and the moment you most want it to check is the moment you
+log back in. The same absolute-`cd` warning applies verbatim.
+
+**There is no `WakeToRun` equivalent to worry about, and that is the behaviour we
+want.** `launchd` will not wake a sleeping Mac for a `StartInterval` job — so it
+cannot fire a two-factor prompt at a phone nobody is holding. It *does* run a
+missed job when the Mac wakes, so the "laptop opened at 10:00" case is covered
+without any extra triggers.
+
+Then load all three and check:
 
 ```
 launchctl load ~/Library/LaunchAgents/com.agenda.heavy.plist
 launchctl load ~/Library/LaunchAgents/com.agenda.sync.plist
+launchctl load ~/Library/LaunchAgents/com.agenda.auth.plist
 launchctl list | grep com.agenda
 ```
 
@@ -194,14 +253,21 @@ AGENDA=/home/you/my-agenda
 3  7  * * * cd $AGENDA && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
 7 18  * * * cd $AGENDA && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
 0 9-23/2 * * * cd $AGENDA && claude -p "Read runbooks/sync-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
+4  *  * * * cd $AGENDA && node src/auth-retry.mjs >> data/runlog-stdout.txt 2>&1
 ```
 
 Both `PATH` and `AGENDA` are placeholders. Install it with `crontab -e`, and
 check it took with `crontab -l`.
 
+The last line is the auth lane. It is a plain Node script rather than an agent
+session, so it needs no `--allowedTools` and no Claude session at all; on all but
+a handful of ticks it decides in milliseconds and writes one heartbeat field.
+
 **`cron` does not catch up.** A job whose time passed while the machine was
-asleep is gone. If your machine sleeps, use `systemd` timers with
-`Persistent=true` instead, or `anacron`.
+asleep is gone — so on Linux, unlike Windows and macOS, a machine that was asleep
+at :04 waits until the next hour rather than checking on wake. If your machine
+sleeps, use `systemd` timers with `Persistent=true` instead (`OnCalendar=hourly`
+for the auth lane), or `anacron`.
 
 There is **no dead-man's switch here either** — it needs the Windows Outlook
 sink. Every run logs `deadman=SKIPPED(no-calendar-sink)`, which is expected and
@@ -274,10 +340,17 @@ untrusted input.
 
 ```
 node scripts/validate-setup.mjs
+node src/auth-retry.mjs --status
 ```
 
 and in Claude Code, `/agenda-doctor`, which reports when each task last ran and
 next runs.
+
+`--status` is the one-command check that the auth lane sees what you think it
+sees: it prints the session file it resolved, whether that session is still
+valid, the newest success and failure it knows about, whether a bad-credentials
+lock is in force, and the verdict it would reach. **It writes nothing and starts
+no login.**
 
 Then read the log after a day:
 
@@ -285,13 +358,19 @@ Then read the log after a day:
 tail -5 data/runlog.txt
 ```
 
-Heavy lines start with an ISO timestamp, sync lines start with `SYNC`, and
-watchdog rescues start with `STALE`. So:
+Heavy lines start with an ISO timestamp, sync lines start with `SYNC`, watchdog
+rescues start with `STALE`, and auth-lane fires start with `AUTH`. So:
 
 ```
-grep -v -e ^SYNC -e ^STALE data/runlog.txt | tail -3   # the last heavy runs
-grep ^STALE data/runlog.txt                            # every rescue, ever
+grep -v -e ^SYNC -e ^STALE -e ^AUTH data/runlog.txt | tail -3   # the last heavy runs
+grep ^STALE data/runlog.txt                                     # every rescue, ever
+grep ^AUTH  data/runlog.txt                                     # every login attempt
 ```
+
+An `AUTH` line appears **only when the lane actually fired a login** — a quiet
+check writes nothing here, because this lane ticks 24 times a day and a heartbeat
+would bury the other three within a fortnight. `data/auth-retry.json`'s
+`lastCheckAt` is the heartbeat instead.
 
 **Two `STALE` lines for the same lane on one day** means the watchdog rescued it
 twice and has now stopped by design. That is the signal that something is failing

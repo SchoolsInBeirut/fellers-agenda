@@ -1,6 +1,6 @@
 {
   "name": "fellers-agenda",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A weekly agenda that builds itself: scrape your LMS, plan the week, render one self-contained page.",
   "type": "module",
   "private": true,

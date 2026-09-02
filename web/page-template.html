@@ -375,8 +375,38 @@ button{font-family:inherit}
 .tg-ad .cell.od{border-color:var(--todo);box-shadow:0 0 0 2px var(--todo-line)}
 .tg-ad .cell.done{background:var(--done-soft);border-color:var(--done)}
 
-/* the hour canvas */
+/* the hour canvas. ONE FRAME: fitGrid() sizes --pxh from the viewport and puts
+   the real ceiling on this box inline, so the week lands inside one screen at
+   every width. What is left here is the pre-fit default and the fallback for
+   any pass where the viewport cannot be measured (print, jsdom). */
 .tg-scroll{overflow-y:auto;overflow-x:hidden;max-height:min(74vh,706px);overscroll-behavior:contain}
+
+/* ---- the folded hours ----------------------------------------------------
+   One rail per trimmed end, flush against the canvas it closes. Quiet by
+   default - it is furniture, not a control the eye should keep landing on -
+   and it carries the count of what it holds so the fold is never a surprise. */
+.tg-edge{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;margin:0;padding:5px 10px;
+  background:var(--surface-2);border:0;border-top:1px solid var(--line);
+  font:500 10px var(--ui);letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+  cursor:pointer;
+  transition:background .18s var(--ease),color .18s var(--ease);
+}
+.tg-edge-up{border-top:0;border-bottom:1px solid var(--line)}
+.tg-edge:hover{background:var(--accent-soft);color:var(--accent)}
+.tg-edge:active{background:var(--accent-soft)}
+.tg-edge:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tg-edge.open{color:var(--accent)}
+.tg-edge .ec{font-size:9px;line-height:1;opacity:.8}
+/* the one thing the fold could otherwise misplace, said out loud */
+.tg-edge .edue{
+  color:var(--todo);font-variant-numeric:tabular-nums;letter-spacing:.05em;
+}
+/* a thumb needs a real target, and there is no hover to announce it with */
+@media (hover:none){
+  .tg-edge{padding:9px 10px;font-size:10.5px}
+}
 .tg-gut{position:relative;height:calc(var(--hours) * var(--pxh))}
 .tg-hr{
   position:absolute;right:8px;padding-top:2px;
@@ -1316,8 +1346,10 @@ body.dragging-block .tblock{touch-action:none}
   .hmins{grid-column:3;text-align:left;padding-top:3px}
   .lane-body{grid-template-columns:1fr;padding:10px}
   #stamp{max-width:100%}
-  /* one day at a time: let the page scroll rather than nesting a scroller under a thumb */
-  .tg-scroll{max-height:none}
+  /* ONE FRAME: the canvas no longer grows past the screen here either - fitGrid()
+     sizes the hour so one day fits one frame, and the rails hold what it trimmed.
+     The old `max-height:none` (let the PAGE scroll instead of nesting a scroller
+     under a thumb) is exactly the scrolling this replaced. */
   .tgrid{--gutw:50px}
   .details{padding:12px 12px 14px}
   /* thumbs need a bigger target than a mouse does */
@@ -1518,8 +1550,19 @@ var LOGP = "[" + CFG.ns + "]";  /* every console line this page writes */
 var WEEKS_AHEAD = 5;
 var WEEKS_BACK = 4;
 var OVERDUE_WINDOW_DAYS = 21;
-var GRID_END = 1440;      /* the grid always runs to midnight: 11:59pm is where deadlines live */
-var GRID_START = 480;     /* 08:00, pulled earlier if anything sits above it */
+var GRID_END = 1440;      /* midnight: the far wall, and where 11:59pm deadlines pin */
+var GRID_START = 480;     /* 08:00, the head of the default frame */
+/* --- one frame: the hours the week actually uses (see computeGridRange) ---- */
+var GRID_DEF_END = 1200;  /* 20:00 - the foot of the default frame, for an empty week */
+var GRID_MIN_SPAN = 240;  /* four hours: a frame narrower than this is not a week */
+var GRID_FOOT = 20;       /* a block landing flush on the last line still needs its grip */
+var EOD_PIN = 1380;       /* 23:00 - a deadline at or past it is the day's closing bell, and
+                             pins to the foot rail instead of dragging empty hours into frame */
+var NOW_GRACE = 120;      /* "now" widens the frame only this close to real content */
+var PXH_MIN = 30;         /* the readability floor for one hour of canvas */
+var PXH_MAX = 64;         /* and the ceiling: a short week does not get stretched rows */
+var FRAME_RESERVE = 132;  /* viewport kept clear of the canvas: masthead, rails, margin */
+var EDGE_GRAB = 26;       /* px from the canvas edge where a drag opens the folded hours */
 var MARK_GROUP = 22;      /* deadlines this close share one rule, chips stack under it */
 var MAX_WEIGHT = typeof CFG.maxWeight === "number" ? CFG.maxWeight : 5;  /* the focus engine's scale */
 
@@ -2709,7 +2752,8 @@ var state = {
   data: normalize(null), weekOffset: 0, open: {}, todayKey: null,
   daySel: null,        /* anchor day of the visible slice, 0-6 within the week */
   span: 7,             /* how many day columns fit */
-  win: null,           /* {s,e,span} minutes covered by the grid */
+  win: null,           /* the frame: see computeGridRange for every field on it */
+  edge: { up: false, dn: false },  /* folded hours the user - or a drag - has opened */
   zone: "",
   idx: null, laneKeys: {}, itemByKey: {}, blockByKey: {},
   freshDone: null,     /* the key just marked, so the ledger row can land */
@@ -3090,20 +3134,93 @@ function dayModel(dk, idx, todayKey) {
   };
 }
 
+/* ---- the frame the week is drawn in ---------------------------------------
+   ONE FRAME. The canvas shows the hours the week actually uses and folds the
+   rest away behind two rails that open on a tap - or on their own, when a drag
+   reaches for them. Nothing is thrown away, only folded.
+
+   Two kinds of thing set the range, and they are NOT the same kind:
+
+     SPANS   - study blocks and class meetings occupy time, so both of their
+               edges count. A 9am lecture still has to be on screen even when
+               nothing is planned before noon.
+     MOMENTS - deadlines are instants, not sessions (the footer says so). They
+               open the frame downward like anything else, right up to EOD_PIN;
+               at or past it they are the day's closing bell and pin to the foot
+               rail rather than drag empty hours into the frame. That case is
+               not an edge case: most course deadlines land at 11:59pm, so
+               honouring them literally would mean the frame never trims at the
+               bottom and the whole feature would do nothing. The foot rail
+               names them ("2 later hours - 4 due 11:59 PM") so the fold is
+               stated rather than hidden, and opening it puts them back on their
+               real line. A deadline at 21:30 is not a closing bell and opens
+               the frame normally.
+
+   "now" widens the frame only when it is already within NOW_GRACE of real
+   content, so opening the page at 3am does not stretch the week to 22 hours.
+
+   The result is a plain LINEAR window, and that is the whole point of doing it
+   this way rather than segmenting out the gaps: gpct() and colMinuteAt() are
+   exact inverses over any [s,e], so trimming the frame costs the drag maths
+   nothing at all, and a gap between two tasks stays visible and to scale.
+
+   Pure: give it the same arrays and it gives the same window. Everything the
+   rails and the fitter need is on the result -
+     s,e,span  the live frame (rails open)      fs,fe   the folded frame
+     hidLo     minutes folded above fs          hidHi   minutes folded below fe
+     pinned    moments sitting on the foot rail                              */
+function computeGridRange(spans, moments, nowMin, edge) {
+  var lo = null, hi = null, pinned = 0, i, v;
+  function low(m) { if (m !== null && m !== undefined && (lo === null || m < lo)) lo = m; }
+  function high(m) { if (m !== null && m !== undefined && (hi === null || m > hi)) hi = m; }
+
+  for (i = 0; i < spans.length; i++) { low(spans[i][0]); high(spans[i][1]); }
+  for (i = 0; i < moments.length; i++) {
+    v = moments[i];
+    if (v === null || v === undefined) continue;
+    low(v);
+    if (v < EOD_PIN) high(v); else pinned++;
+  }
+  /* nothing at all on the week: a sane working day rather than a sliver */
+  if (lo === null || hi === null) { lo = GRID_START; hi = GRID_DEF_END; }
+  if (hi < lo) hi = lo;
+  if (nowMin !== null && nowMin !== undefined &&
+      nowMin >= lo - NOW_GRACE && nowMin <= hi + NOW_GRACE) { low(nowMin); high(nowMin); }
+
+  /* outward to the hour - that rounding IS the breathing room in every case but
+     one, and the exception (a block whose foot lands exactly on the last line,
+     with no room left to grab its grip) buys a whole row */
+  var s = Math.floor(lo / 60) * 60;
+  var e = Math.ceil(hi / 60) * 60;
+  if (e - hi < GRID_FOOT) e += 60;
+  if (s < 0) s = 0;
+  if (e > GRID_END) e = GRID_END;
+  if (e - s < GRID_MIN_SPAN) {
+    e = s + GRID_MIN_SPAN;
+    if (e > GRID_END) { e = GRID_END; s = Math.max(0, GRID_END - GRID_MIN_SPAN); }
+  }
+
+  var fs = s, fe = e;                 /* the folded frame, before either rail opens */
+  if (edge && edge.up) s = 0;
+  if (edge && edge.dn) e = GRID_END;
+  return {
+    s: s, e: e, span: e - s,
+    fs: fs, fe: fe, hidLo: fs, hidHi: GRID_END - fe, pinned: pinned
+  };
+}
+
+/* the day models the board is about to draw, reduced to the two arrays above */
 function gridWindow(days, nowMin) {
-  var s = GRID_START, i, j;
+  var spans = [], moments = [], todayShown = false, i, j;
   for (i = 0; i < days.length; i++) {
     var day = days[i];
     for (j = 0; j < day.blocks.length; j++)
-      if (day.blocks[j].timed) s = Math.min(s, day.blocks[j].sm);
-    for (j = 0; j < day.marks.length; j++) s = Math.min(s, day.marks[j].m);
-    /* a 9am lecture has to be on screen even when nothing is planned before noon */
-    for (j = 0; j < day.meets.length; j++) s = Math.min(s, day.meets[j].sm);
-    if (day.isToday && nowMin !== null) s = Math.min(s, nowMin);
+      if (day.blocks[j].timed) spans.push([day.blocks[j].sm, day.blocks[j].em]);
+    for (j = 0; j < day.meets.length; j++) spans.push([day.meets[j].sm, day.meets[j].em]);
+    for (j = 0; j < day.marks.length; j++) moments.push(day.marks[j].m);
+    if (day.isToday) todayShown = true;
   }
-  s = Math.max(0, Math.floor(s / 60) * 60);
-  if (GRID_END - s < 240) s = GRID_END - 240;
-  return { s: s, e: GRID_END, span: GRID_END - s };
+  return computeGridRange(spans, moments, todayShown ? nowMin : null, state.edge);
 }
 function gpct(win, m) {
   var p = (m - win.s) / win.span * 100;
@@ -3309,6 +3426,34 @@ function gutterHtml(win, todayShown) {
   return '<div class="tg-gut">' + out + "</div>";
 }
 
+/* One rail per folded end. It says what it is holding - and what is sitting on
+   it, because a deadline pinned here is the one thing the fold could otherwise
+   misplace - and opens on a tap. A drag that reaches the canvas edge opens the
+   same rail through the same state, so there is only ever one way in. */
+function edgeRailHtml(win, side) {
+  var hid = side === "up" ? win.hidLo : win.hidHi;
+  if (!(hid > 0)) return "";
+  var open = side === "up" ? state.edge.up : state.edge.dn;
+  var n = Math.round(hid / 60);
+  var due = side === "dn" && !open && win.pinned > 0 ? win.pinned : 0;
+  var lab = open
+    ? "Fold the " + (side === "up" ? "early" : "late") + " hours away"
+    : n + " " + (side === "up" ? "earlier" : "later") + " hour" + (n === 1 ? "" : "s");
+  var aria = open
+    ? "Hide the " + (side === "up" ? "hours before " + hourLabel(win.fs) : "hours after " + hourLabel(win.fe))
+    : "Show " + n + " " + (side === "up" ? "earlier" : "later") + " hour" + (n === 1 ? "" : "s") +
+      (due ? ", holding " + due + " deadline" + (due === 1 ? "" : "s") + " due at 11:59 PM" : "");
+  /* the chevron points where the tap sends the canvas edge */
+  var caret = (side === "up") === !open ? "▴" : "▾";
+  return '<button type="button" class="tg-edge tg-edge-' + side + (open ? " open" : "") +
+    '" data-edge="' + side + '" aria-expanded="' + (open ? "true" : "false") +
+    '" aria-label="' + esc(aria) + '">' +
+    '<span class="ec" aria-hidden="true">' + caret + "</span>" +
+    "<span>" + esc(lab) + "</span>" +
+    (due ? '<span class="edue">' + due + " due 11:59 PM</span>" : "") +
+    "</button>";
+}
+
 function loadStripHtml(d, days) {
   var byCourse = {}, order = [], i, j, total = 0;
   for (i = 0; i < days.length; i++)
@@ -3501,8 +3646,10 @@ function boardHtml(d, idx, now, todayKey, nowMin) {
   var grid = '<div class="tgrid cols-' + span + '" style="--hours:' + (win.span / 60) + '">' +
     '<div class="tg-head">' + heads + "</div>" +
     (anyAllday ? '<div class="tg-all"><div class="tg-alllab">No set<br>time</div>' + allday + "</div>" : "") +
+    edgeRailHtml(win, "up") +
     '<div class="tg-scroll"><div class="tg-body">' + gutterHtml(win, todayShown) + cols +
-    "</div></div></div>";
+    "</div></div>" +
+    edgeRailHtml(win, "dn") + "</div>";
 
   return '<div class="board">' + bar + switcher + grid + loadStripHtml(d, all) + "</div>";
 }
@@ -4120,8 +4267,10 @@ function sideBoardHtml(d) {
 /* ------------------------------------------------------------------ render -- */
 function render() {
   /* the grid is about to be replaced wholesale, so a gesture still holding one
-     of its nodes has to end here rather than keep measuring a detached column */
-  if (typeof drag !== "undefined" && drag) dragStop(false);
+     of its nodes has to end here rather than keep measuring a detached column.
+     The one exception is dragRelay(), which is redrawing the grid UNDER a live
+     gesture on purpose and hands it to the new nodes itself. */
+  if (typeof drag !== "undefined" && drag && !dragRelaying) dragStop(false);
   /* and an armed "won't do" belongs to DOM that is about to stop existing.
      Silent: there are no nodes left to put back, only the state to forget. */
   if (state.cancelArm) disarmCancel(true);
@@ -4164,6 +4313,7 @@ function render() {
 
   document.getElementById("app").innerHTML = html;
   syncDetails();
+  fitGrid();          /* size the hour before anything measures the canvas */
   measureScrollbar();
   positionNow();
   restScroll();
@@ -4187,6 +4337,40 @@ function refocusBlock() {
     if (btn) { try { btn.focus(); } catch (e) {} }
     return;
   }
+}
+
+/* ---- one frame ------------------------------------------------------------
+   The hour is sized from the viewport rather than from a constant, so the frame
+   computeGridRange() chose lands inside one screen instead of running off the
+   bottom of the page.
+
+   PXH_MIN is the readability floor and it is not negotiable: when the range is
+   long enough that honouring it would overflow the screen, the floor wins and
+   the canvas keeps its own scrollbar. Squashing rows to illegibility is never
+   the answer - an explicit scroller is, and it is the documented fallback.
+   PXH_MAX stops the opposite failure, a four-hour week stretched into stripes.
+
+   Runs on every render and on resize, after the DOM exists and before anything
+   measures the canvas. Bails without touching a thing when there is no viewport
+   to read (print, jsdom), leaving the CSS defaults in charge. */
+function fitGrid() {
+  var grid = document.querySelector(".tgrid");
+  var sc = document.querySelector(".tg-scroll");
+  if (!grid || !sc || !state.win) return;
+  var hours = state.win.span / 60;
+  var vh = window.innerHeight || 0;
+  if (!(hours > 0) || !(vh > 0)) return;
+  var head = grid.querySelector(".tg-head"), all = grid.querySelector(".tg-all");
+  var rails = grid.querySelectorAll(".tg-edge"), i;
+  var chrome = (head ? head.offsetHeight : 0) + (all ? all.offsetHeight : 0);
+  for (i = 0; i < rails.length; i++) chrome += rails[i].offsetHeight;
+  var avail = vh - chrome - FRAME_RESERVE;
+  if (avail < PXH_MIN * 3) avail = PXH_MIN * 3;   /* three hours is the smallest honest frame */
+  var pxh = avail / hours;
+  if (pxh < PXH_MIN) pxh = PXH_MIN;
+  else if (pxh > PXH_MAX) pxh = PXH_MAX;
+  grid.style.setProperty("--pxh", fx(pxh) + "px");
+  sc.style.maxHeight = Math.ceil(avail) + "px";
 }
 
 /* The header rows sit outside the scroller, so they need to know how much room
@@ -4482,14 +4666,80 @@ function ghostPaint() {
     drag.lastCol = drag.col;
   }
 }
-/* the grid scrolls inside its own box: follow the pointer to its edges */
+/* ---- reaching for the folded hours ----------------------------------------
+   The frame trims the week's dead time, so a block CAN be asked to go somewhere
+   the canvas is not currently showing. Pushing it at the edge opens that end.
+
+   Opening a rail changes the frame, and the frame is the scale everything on
+   the canvas is positioned against, so the grid has to be redrawn - which would
+   normally kill the gesture holding it. Instead the gesture is handed to the
+   new nodes: (day, bucket) survives a redraw even when the block's key does
+   not, which is the same identity refocusBlock() navigates by. A rail that
+   opened under the thumb and then dropped the block would be worse than no
+   rail at all.
+
+   `grab` and `grabEnd` are minutes, not pixels, so they stay true across the
+   rescale and the block does not jump under the pointer. Each side opens at
+   most once per gesture: state.edge[side] latches, and dragRelay refuses a
+   side that is already open. */
+var dragRelaying = false;
+function dragRelay(side) {
+  if (!drag || !drag.armed || dragRelaying) return false;
+  if (side !== "up" && side !== "dn") return false;
+  if (state.edge[side]) return false;
+  var win = state.win;
+  if (!win) return false;
+  if (!(side === "up" ? win.hidLo > 0 : win.hidHi > 0)) return false;
+
+  var d = drag, sc = document.querySelector(".tg-scroll"), i;
+  dragRelaying = true;
+  state.edge[side] = true;
+  if (d.ghost && d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+  d.ghost = null;
+  d.lastCol = null;
+  state.keepScroll = sc ? sc.scrollTop : null;   /* restScroll must not re-rest mid-gesture */
+  try { render(); } finally { dragRelaying = false; }
+
+  /* find the same block on the redrawn grid, by the identity that survived */
+  var el = null, nodes = document.querySelectorAll(".tblock[data-drag]");
+  for (i = 0; i < nodes.length; i++)
+    if (nodes[i].getAttribute("data-bday") === d.b.d &&
+        nodes[i].getAttribute("data-bc") === d.b.c) { el = nodes[i]; break; }
+  /* the block stopped being draggable across the redraw (a goal closed under
+     it, say): let the gesture go rather than drive a node that is not there */
+  if (!el) { drag = null; document.body.classList.remove("dragging-block"); return true; }
+
+  var col = null, cols = document.querySelectorAll(".tg-col[data-dk]");
+  for (i = 0; i < cols.length; i++)
+    if (cols[i].getAttribute("data-dk") === d.day) col = cols[i];
+  d.el = el;
+  d.srcCol = el.closest(".tg-col") || col;
+  d.col = col || d.srcCol;
+  el.classList.add("dragging");
+  document.body.classList.add("dragging-block");
+  try { el.setPointerCapture(d.id); } catch (e) {}
+  drag = d;
+  ghostPaint();
+  /* put the ghost back under the eye: the canvas just changed height and scale */
+  sc = document.querySelector(".tg-scroll");
+  if (sc && d.ghost) sc.scrollTop = Math.max(0, d.ghost.offsetTop - sc.clientHeight / 2);
+  return true;
+}
+
+/* the grid scrolls inside its own box: follow the pointer to its edges, and
+   when there is no scroll left on that side, open the hours behind it */
 function dragScroll(y) {
   if (!drag || !drag.col || !drag.col.closest) return;
   var sc = drag.col.closest(".tg-scroll");
   if (!sc) return;
   var r = sc.getBoundingClientRect();
-  if (y < r.top + 34) sc.scrollTop -= 14;
-  else if (y > r.bottom - 34) sc.scrollTop += 14;
+  if (y < r.top + EDGE_GRAB) {
+    if (sc.scrollTop > 0) sc.scrollTop -= 14;
+    else dragRelay("up");
+  } else if (y > r.bottom - EDGE_GRAB) {
+    if (sc.scrollTop + sc.clientHeight < sc.scrollHeight - 1) sc.scrollTop += 14;
+    else dragRelay("dn");
+  }
 }
 
 function dragArm() {
@@ -4563,6 +4813,17 @@ function onBlockMove(ev) {
   /* a resize stays in its own column; a move follows the pointer across days */
   var col = drag.mode === "size" ? drag.srcCol : (colUnder(ev.clientX) || drag.col);
   var pm = colMinuteAt(col, ev.clientY);
+  /* the pointer has reached past the frame: open that end and re-read it at the
+     new scale, so the minute under the thumb is the minute the block will take */
+  if (pm !== null && state.win) {
+    var opened = pm < state.win.s ? dragRelay("up")
+      : (pm > state.win.e ? dragRelay("dn") : false);
+    if (opened) {
+      if (!drag) return;                       /* the block did not survive the redraw */
+      col = drag.mode === "size" ? drag.srcCol : (colUnder(ev.clientX) || drag.col);
+      pm = colMinuteAt(col, ev.clientY);
+    }
+  }
   if (pm !== null) {
     if (drag.mode === "move") {
       drag.col = col;
@@ -4672,6 +4933,7 @@ document.getElementById("app").addEventListener("click", function (ev) {
     if (step === 0) state.weekOffset = 0;
     else state.weekOffset = Math.max(-WEEKS_BACK, Math.min(WEEKS_AHEAD, state.weekOffset + step));
     state.daySel = null;                       /* a new week re-anchors on today */
+    state.edge = { up: false, dn: false };     /* and re-folds: a new week, a new frame */
     render();
     return;
   }
@@ -4679,6 +4941,17 @@ document.getElementById("app").addEventListener("click", function (ev) {
   if (day) {
     state.daySel = parseInt(day.getAttribute("data-day"), 10);
     render();
+    return;
+  }
+  /* the folded hours, opened and folded away again by hand. The same state a
+     drag reaching the canvas edge sets, so there is one way in and one way out. */
+  var edge = hit("[data-edge]");
+  if (edge) {
+    var side = edge.getAttribute("data-edge");
+    if (side === "up" || side === "dn") {
+      state.edge[side] = !state.edge[side];
+      render();
+    }
     return;
   }
   if (hit("[data-closeall]")) { state.open = {}; render(); return; }
@@ -4728,7 +5001,7 @@ var MQ_KEEP = [];
       else if (mq.addListener) mq.addListener(relay);
     }
   } catch (e) {}
-  window.addEventListener("resize", function () { relay(); measureScrollbar(); });
+  window.addEventListener("resize", function () { relay(); fitGrid(); measureScrollbar(); });
 })();
 
 /* ------------------------------------------------------------------- boot --- */

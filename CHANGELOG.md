@@ -9,6 +9,89 @@ is the honest answer to "does this still work?" — not the release date.
 
 ---
 
+## [1.1.0] — 2026-09-02
+
+**Last verified working: 2026-09-02** (Node 22.x and 24.x, Windows 11 and macOS
+14, Claude Code, Brightspace via `brightspace-mcp-server@latest`, Google Drive
+through the Claude connector.)
+
+### Added — an hourly auth watchdog
+
+- **`src/auth-retry.mjs`, a third watchdog, on a fifth scheduled task.** The two
+  existing watchdogs ask *"did a run happen?"* and *"is this machine alive?"*.
+  Neither can see the case where a run fires exactly on time, hits an expired
+  session, tries its one permitted re-auth, and stops — because that run *did*
+  happen and the machine *is* alive. Both are right to stay silent, and until now
+  nothing retried the login until the next heavy run, half a day later.
+- It is **free on a healthy machine.** An LMS token lives about an hour, so an
+  expired session is the pipeline's normal resting state between runs; firing on
+  that alone would mean two dozen pointless headless logins a day. It fires only
+  when there is no session file at all, or when the session is unusable **and**
+  the newest failure is newer than the newest success.
+- **Exit 5 is the only stop, and it is permanent.** A rejected password writes
+  `data/auth-locked.json` and the lane never fires again, because retrying one an
+  institution has already refused locks accounts. Every other code — including
+  exit 4, which means the lane called `reauth.mjs` wrongly — retries hourly and
+  lets a failure counter climb. Nothing unrecognised can reach the stop state.
+- **Number matching is handled as one feature with the retry, not as a separate
+  one.** Where an identity provider renders a number to type into an
+  authenticator app rather than sending an approve/deny push, a headless login
+  raises a prompt nobody can see — so retrying without relaying the number just
+  repeats an unanswerable prompt forever. The vendored login patch now captures
+  that number and prints it; the lane reads the login's output **line by line as
+  it arrives** and relays it within seconds to `data/auth-mfa.json`, an on-screen
+  alert, and an optional push hook. Streaming rather than buffering is the whole
+  point: the prompt is worth about ninety seconds. There is a test that proves
+  the number reaches the relay while the login is still running.
+- **A documented push-hook seam, with no provider hard-coded.** `docs/CONFIG.md`
+  ships two working examples — a one-line hook that pushes to the Claude mobile
+  app, and a `curl` for people who want sub-second delivery.
+- **`data/reauth-last-output.txt`.** Every login now leaves its whole
+  password-scrubbed transcript, last 20 kB, overwritten per run. One exit code
+  and one last line cannot tell a crashed auth CLI apart from an unanswered
+  second factor, and those have opposite fixes.
+- New config block `authRetry` (`enabled`, `sessionFiles`, `minIntervalMinutes`,
+  `pushHook`). **An empty `sessionFiles` opts the lane out entirely**, which is
+  the correct answer for a connector that keeps no session file — Canvas, for
+  one. Without that branch the lane would fire hourly forever.
+
+### Changed — the page is one frame
+
+- **The weekly grid is drawn only in the hours the week actually uses**, and the
+  dead time above and below folds behind two rails that name what they hold. On a
+  phone this is the difference between a page that scrolls and a week that fits
+  the screen. It is a layout change: density, chips, marks, hues, sizes and the
+  wire protocol are all untouched.
+- **A deadline at or after 23:00 pins to the foot rail** instead of dragging
+  empty hours into the frame. Most course deadlines land at 11:59pm, so honouring
+  them literally would mean the frame never trimmed at the bottom and the whole
+  feature did nothing. A deadline at 21:30 still opens the frame normally, and
+  the fold is always stated — *"2 later hours · 4 due 11:59 PM"*.
+- **A gap between two tasks stays visible, and to scale.** The frame remains a
+  plain linear window rather than a segmented one, which is why the drag maths
+  needed no changes at all: position and pointer-to-minute are still exact
+  inverses.
+- **Dragging a block past the edge opens the fold under the pointer** and hands
+  the live gesture to the redrawn nodes, so a trimmed grid is never an
+  unreachable one.
+- The hour is sized from the viewport between a 30px readability floor and a 64px
+  ceiling. When the floor cannot be honoured the canvas keeps its own scrollbar —
+  an explicit, documented fallback rather than illegible rows.
+- Task names gained a fifth: `<prefix> AuthRetry`. `scripts/install-tasks.cmd`
+  registers and verifies it, and now warns loudly instead of silently if a
+  credential lockout is in force. `docs/SCHEDULING.md` carries the `launchd` and
+  `cron` equivalents.
+
+### Notes
+
+- The number-matching capture selector is **flagged unverified in production** in
+  every place it is documented. It is the element the identity provider ships
+  today and the code path is unit-tested end to end, but no run here has yet met a
+  live number-matching prompt. If it is wrong the fix is one selector, and the
+  transcript file and the read-only probe are the two diagnostics for it.
+
+---
+
 ## [1.0.0] — 2026-09-02
 
 **Last verified working: 2026-09-02** (Node 22.x and 24.x, Windows 11 and macOS
@@ -83,6 +166,7 @@ First public release.
   the scheduler slept through, and an off-machine dead-man's switch on a
   calendar that fires when the whole machine is gone.
 - Both are documented in `docs/design-notes/watchdogs.md`.
+  *(1.1.0 adds a third.)*
 
 ### Docs
 
@@ -92,4 +176,5 @@ First public release.
 - Four design notes explaining the rules that exist because something went
   wrong once.
 
+[1.1.0]: https://github.com/SchoolsInBeirut/fellers-agenda/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SchoolsInBeirut/fellers-agenda/releases/tag/v1.0.0

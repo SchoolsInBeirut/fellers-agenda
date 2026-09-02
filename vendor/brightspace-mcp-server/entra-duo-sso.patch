@@ -15,6 +15,13 @@ from "the second factor was never approved". Those are opposite problems with
 opposite fixes, and collapsing them into one generic failure is what makes an
 auth break take an afternoon to diagnose instead of a minute.
 
+It also prints the second factor's NUMBER where the tenant uses number matching
+rather than an approve/deny push. That case is not cosmetic: the number is
+rendered on a headless page nobody can see, and the user has about 60-90 seconds
+to type it into their authenticator app, so an unrelayed prompt is not "a push
+that was missed" - it was never answerable at all. The line it prints,
+`MFA-NUMBER: <n>`, is the shape `src/auth-retry.mjs` reads and relays.
+
 It also softens two networkidle waits: an LMS home page that keeps polling
 connections open never goes idle, so the wait always burns its full timeout on a
 page that has been usable for seconds.
@@ -89,6 +96,16 @@ page that has been usable for seconds.
 +    passwordError: "#passwordError",
 +    kmsiCheckbox: "#KmsiCheckboxField",
 +    accountTiles: "#tilesHolder .tile, [data-test-id='accountTile']",
++    // NUMBER MATCHING. Where the tenant uses it there is no approve/deny push:
++    // the sign-in page renders a short number and the user must TYPE it into
++    // their authenticator app within about 60-90 seconds. Headless, nobody can
++    // see that number, so the login is unanswerable unless it is printed - see
++    // the probe in rideToHome() and src/auth-retry.mjs's relay.
++    // UNVERIFIED IN PRODUCTION: this selector is the one Entra ships today, but
++    // no run here has yet met a live number-matching prompt to confirm it. If
++    // the number never appears, read data/reauth-last-output.txt and compare
++    // against what the page actually renders.
++    displaySign: "#idRichContext_DisplaySign, .displaySign, [data-testid='displaySign']",
 +};
 +
 +const POLL_MS = 500;
@@ -247,6 +264,21 @@ page that has been usable for seconds.
 +        let codeLogged = false, sawSecondFactor = false;
 +        log("WARN", "Waiting for approval on your phone (if a prompt is required)...");
 +        while (Date.now() < deadline) {
++            // The number-matching probe runs on EVERY poll, before any URL
++            // test, because that number is rendered on the identity provider's
++            // own page rather than on a separate second-factor host. Strictly
++            // 1-3 digits: relaying a WRONG number is worse than relaying none,
++            // because the user types it, so anything else is discarded.
++            if (!codeLogged) {
++                const sign = await page.locator(ENTRA.displaySign).first()
++                    .textContent({ timeout: 250 }).catch(() => null);
++                const digits = (sign || "").trim().match(/^\d{1,3}$/);
++                if (digits) {
++                    sawSecondFactor = true;
++                    codeLogged = true;
++                    log("WARN", `MFA-NUMBER: ${digits[0]} - enter this number in your authenticator app`);
++                }
++            }
 +            const url = page.url();
 +            if (url.includes("/d2l/home")) return;
 +            if (url.includes("/d2l/")) {
@@ -316,11 +348,15 @@ page that has been usable for seconds.
 +            }
 +            await page.waitForTimeout(POLL_MS);
 +        }
-+        // Two different timeouts, deliberately worded differently: one means
-+        // "approve the next push", the other means "the chain changed again".
-+        throw new BrowserAuthError(sawSecondFactor
-+            ? "MFA-TIMEOUT: the second-factor prompt was never approved within 120 seconds"
-+            : "MFA-TIMEOUT: never reached the LMS home page within 120 seconds after sign-in", "mfa_approval");
++        // Three different timeouts, deliberately worded differently: the first
++        // means "the number was shown and nobody typed it", the second "approve
++        // the next push", the third "the chain changed again". All three map to
++        // exit 6, which is the one failure worth retrying automatically.
++        throw new BrowserAuthError(codeLogged
++            ? "MFA-TIMEOUT: the authenticator number was never entered within 120 seconds"
++            : sawSecondFactor
++                ? "MFA-TIMEOUT: the second-factor prompt was never approved within 120 seconds"
++                : "MFA-TIMEOUT: never reached the LMS home page within 120 seconds after sign-in", "mfa_approval");
 +    }
  }
 

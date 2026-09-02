@@ -7,6 +7,8 @@
       "Bash(node scripts/demo.mjs)",
       "Bash(node scripts/health-check.mjs)",
       "Bash(node scripts/reauth.mjs --probe)",
+      "Bash(node src/stale-check.mjs --dry-run --verbose)",
+      "Bash(node src/auth-retry.mjs --status)",
       "Bash(node --test test/*.test.mjs)",
       "Read(./**)"
     ],

@@ -253,8 +253,10 @@ SYNC 2026-09-02T15:00:00Z run=sync cmd=applied=1 completions=merged(2-new,1-doc)
 
 Include every token this run produced, **in step order**, and always finish with
 `push=0` or `push=1(<one-phrase reason>)`. Never grow `data/runlog.txt` beyond
-500 lines — trim from the top, and **never trim a `STALE ` line**: the watchdog
-counts those to enforce its own daily rescue cap.
+500 lines — trim from the top, and **never trim a `STALE ` or an `AUTH ` line**:
+the stale-run watchdog counts `STALE ` to enforce its own daily rescue cap, and
+`AUTH ` is the only record the auth lane keeps of a login it attempted. You never
+write an `AUTH ` line either; `src/auth-retry.mjs` owns that lane.
 
 **Writing this line is the last thing you do, and you do it even when six steps
 skipped.** Then stop. Do not summarise, do not send anything else, do not "check
@@ -283,8 +285,16 @@ one more thing".
   `data/user-completions.json`. **Only the user revokes marks, and only their
   own — never pipeline observations.**
 - **Never attempt an interactive or OAuth authentication flow.** A scheduled run
-  that hits an expired session logs it and stops; only the user can approve a
-  two-factor push.
+  that hits an expired session logs it and stops; only the user can answer a
+  second factor.
+- **LMS auth has an owner now, and it is not you.** `src/auth-retry.mjs` runs on
+  its own hourly task and is the only thing that retries a broken login. This run
+  touches **none** of its files: not `data/auth-retry.json`, not
+  `data/auth-locked.json`, not `data/auth-retry.lock`, not `data/auth-mfa.json`,
+  not `data/reauth-last-output.txt`. In particular, **never delete
+  `data/auth-locked.json`** — its existence is a deliberate stop after the school
+  rejected the stored password, and removing it restarts hourly attempts that
+  lock the account.
 - **Only these files may be written:** `data/user-completions.json` (only via
   `--ingest`, step 2), `data/study-model.json` (only via `--refresh`),
   `data/payload.b64.txt`, `data/focus-plan.json` and `agenda.html` (only via
@@ -300,8 +310,11 @@ one more thing".
   `<ns>-mirror` is not yours:** the heavy run packs the state mirror and rotates
   that doc, a sync run has no fresh scrape behind it to be worth mirroring, and
   this run neither creates nor trashes one. Ever.
-- **A heavy run may be in progress while you run.** That is safe by design and
-  needs no locking: the completion merge is idempotent (re-ingesting the same
+- **A heavy run, or the hourly auth lane, may be in progress while you run.**
+  Both are safe by design and need no locking. The auth lane is trivially safe:
+  it reads four small files, writes only its own three plus one `AUTH ` line, and
+  shares nothing with you — it never touches `latest.json`, the payload, the page
+  or Drive. The heavy run is safe for the reasons below: the completion merge is idempotent (re-ingesting the same
   docs is a no-op; per key the newest `at` wins), the command bus consumes each
   doc exactly once because the loser of a race finds it already trashed, and the
   Drive rotate creates before it trashes — so the worst case is one extra

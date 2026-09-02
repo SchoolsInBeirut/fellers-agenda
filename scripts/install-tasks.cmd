@@ -1,7 +1,7 @@
 @echo off
 setlocal
 REM ============================================================================
-REM  install-tasks.cmd - create AND repair all four scheduled tasks
+REM  install-tasks.cmd - create AND repair all five scheduled tasks
 REM ============================================================================
 REM
 REM  WHAT THIS IS FOR
@@ -12,7 +12,7 @@ REM  a task can look perfectly installed for a month while executing nothing.
 REM  A task without StartWhenAvailable simply loses a run the machine slept
 REM  through - no digest that day, no error, no explanation anywhere.
 REM
-REM  This file creates the four tasks and re-asserts every setting that matters.
+REM  This file creates the five tasks and re-asserts every setting that matters.
 REM  It is IDEMPOTENT AND SAFE TO RUN REPEATEDLY: running it twice, or ten
 REM  times, produces exactly the same end state. Run it after you move the
 REM  repository, after a Windows feature update, or any time /agenda-doctor
@@ -28,15 +28,19 @@ REM    * It never RUNS a task. A run means a live agent session, an email and a
 REM      Drive write - that is the scheduler's job, not an installer's.
 REM    * It never DELETES a task you did not ask it to replace.
 REM    * It never edits config.json, a runbook, or anything under src/.
-REM    * It never writes into data/. The watchdog owns data/stale-check.json
-REM      and the STALE lane of data/runlog.txt; nothing else does.
+REM    * It never writes into data/. The watchdogs own data/stale-check.json and
+REM      data/auth-retry.json, plus the STALE and AUTH lanes of data/runlog.txt;
+REM      nothing else does. In particular it never REMOVES data/auth-locked.json:
+REM      re-registering a task must never look like it cleared a lockout.
 REM
-REM  THE FOUR TASKS
+REM  THE FIVE TASKS
 REM  --------------
 REM    <prefix> Morning     scripts\run-heavy.cmd, daily at scheduler.morningAt
 REM    <prefix> Evening     scripts\run-heavy.cmd, daily at scheduler.eveningAt
 REM    <prefix> Sync        scripts\run-sync.cmd, every 2h inside syncWindow
 REM    <prefix> StaleCheck  scripts\stale-check.vbs, four triggers (below)
+REM    <prefix> AuthRetry   scripts\auth-retry.vbs, the same four triggers on an
+REM                         hourly floor instead of a 30-minute one
 REM
 REM  <prefix> is config.json -> scheduler.taskPrefix, default "Agenda", so the
 REM  task names change with your namespace and never collide with anyone else's.
@@ -63,12 +67,26 @@ REM  Triggers 2 and 3 CANNOT be expressed by schtasks.exe at all - it has no
 REM  /SC ONUNLOCK and no event-subscription syntax. That is why every task here
 REM  goes through Register-ScheduledTask with CIM trigger instances.
 REM
-REM  THE STALECHECK ACTION: wscript.exe, not node.exe
-REM  ------------------------------------------------
-REM  That task fires up to ~50 times a day, mostly while the user is at the
-REM  screen; anything with a console flashes a black window every single time,
-REM  and a watchdog that annoys people gets disabled. wscript has no console.
-REM  See the header of scripts\stale-check.vbs.
+REM  THE WATCHDOG ACTIONS: wscript.exe, not node.exe
+REM  -----------------------------------------------
+REM  Those two tasks fire up to ~50 and ~24 times a day, mostly while the user is
+REM  at the screen; anything with a console flashes a black window every single
+REM  time, and a watchdog that annoys people gets disabled. wscript has no
+REM  console. See the headers of scripts\stale-check.vbs and scripts\auth-retry.vbs.
+REM
+REM  THE AUTHRETRY TASK
+REM  ------------------
+REM  Same four triggers, hourly instead of half-hourly, and two settings that
+REM  carry real reasoning:
+REM    * WakeToRun = FALSE. Never wake a sleeping laptop to put a two-factor
+REM      prompt on a sleeping user's phone. That is the original failure with
+REM      extra steps. StartWhenAvailable plus the resume trigger cover the lid
+REM      opening at 10:00, which is when the prompt can actually be answered.
+REM    * 00:04, not 00:05, so the auth lane and the stale-run watchdog do not
+REM      tick in lockstep and fight over the same waking second.
+REM  ExecutionTimeLimit is 15 min rather than 5: on the rare tick where it fires,
+REM  it is waiting on a real login, and src/auth-retry.mjs already caps its child
+REM  at 7 minutes.
 REM
 REM  HOW THIS FILE IS PUT TOGETHER
 REM  -----------------------------
@@ -82,12 +100,12 @@ REM  any characters they like.
 REM
 REM  USAGE
 REM  -----
-REM    install-tasks.cmd                 create / re-assert all four tasks
+REM    install-tasks.cmd                 create / re-assert all five tasks
 REM    install-tasks.cmd /recreate-sync  also rebuild the Sync task's trigger
 REM                                      (only if its schedule drifted; this
 REM                                      resets that task's run history)
 REM
-REM  Exit 0 = all four are registered and verified. Anything else = they are
+REM  Exit 0 = all five are registered and verified. Anything else = they are
 REM  not, and the reason was printed.
 REM ============================================================================
 
@@ -168,11 +186,13 @@ REM ============================================================================
 #PS# $sync  = Join-Path $Repo 'scripts\run-sync.cmd'
 #PS# $vbs   = Join-Path $Repo 'scripts\stale-check.vbs'
 #PS# $mjs   = Join-Path $Repo 'src\stale-check.mjs'
+#PS# $avbs  = Join-Path $Repo 'scripts\auth-retry.vbs'
+#PS# $amjs  = Join-Path $Repo 'src\auth-retry.mjs'
 #PS#
 #PS# # A task pointing at a script that is not there is worse than no task: it
 #PS# # fails silently, looks installed, and schtasks will never tell you.
-#PS# Write-Host '[1/6] Checking that every target exists ...'
-#PS# foreach ($f in @($heavy, $sync, $vbs, $mjs)) {
+#PS# Write-Host '[1/7] Checking that every target exists ...'
+#PS# foreach ($f in @($heavy, $sync, $vbs, $mjs, $avbs, $amjs)) {
 #PS#   if (-not (Test-Path -LiteralPath $f)) { Write-Host ('      FAILED - missing ' + $f); exit 1 }
 #PS#   Write-Host ('      OK   ' + $f)
 #PS# }
@@ -205,7 +225,7 @@ REM ============================================================================
 #PS# # Restart 3x/10min covers the transient case - the network is not up yet
 #PS# # after a resume. WakeToRun is TRUE here and FALSE on the sync task: the
 #PS# # morning digest is worth waking a sleeping laptop for, a light sync is not.
-#PS# Write-Host '[2/6] Registering the two heavy runs ...'
+#PS# Write-Host '[2/7] Registering the two heavy runs ...'
 #PS# $heavySettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 10) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 #PS# $heavySettings.WakeToRun = $true
 #PS# $heavyAction = New-ScheduledTaskAction -Execute $heavy -WorkingDirectory $Repo
@@ -221,7 +241,7 @@ REM ============================================================================
 #PS# # its edge, while keeping the first fire after the window from happening at
 #PS# # all. No RestartOnFailure: the next fire is only two hours away, and a retry
 #PS# # storm on a run that may push is worse than one skipped sync.
-#PS# Write-Host '[3/6] Registering the sync lane ...'
+#PS# Write-Host '[3/7] Registering the sync lane ...'
 #PS# $exists = $null
 #PS# try { $exists = Get-ScheduledTask -TaskName ($prefix + ' Sync') -ErrorAction Stop } catch { $exists = $null }
 #PS# if ($exists -and $RecreateSync -eq 0) {
@@ -244,7 +264,7 @@ REM ============================================================================
 #PS# }
 #PS#
 #PS# # ---- the stale-run watchdog --------------------------------------------
-#PS# Write-Host '[4/6] Registering the stale-run watchdog ...'
+#PS# Write-Host '[4/7] Registering the stale-run watchdog ...'
 #PS# $wAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $vbs) -WorkingDirectory $Repo
 #PS#
 #PS# # 1. logon - cold boot / sign-in.
@@ -285,22 +305,77 @@ REM ============================================================================
 #PS# $d = 'Weekly agenda stale-run watchdog. Runs src\stale-check.mjs on logon, on unlock, on resume from sleep and every 30 min; if a heavy run was missed or the sync lane has gone quiet, it starts that existing scheduled task through the scheduler. Never runs a launcher directly and never touches the other tasks.'
 #PS# if (-not (Assert-Task ($prefix + ' StaleCheck') $wAction @($tLogon, $tUnlock, $tResume, $tDaily) $wSettings $d)) { $ok = $false }
 #PS#
+#PS# # ---- the hourly auth lane -----------------------------------------------
+#PS# # The stale-run watchdog asks "did a run happen?". This one asks "can we
+#PS# # still log in?" - a genuinely different question, because a run that fired
+#PS# # on time and then died on an expired session DID happen.
+#PS# Write-Host '[5/7] Registering the hourly auth lane ...'
+#PS# $aAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $avbs) -WorkingDirectory $Repo
+#PS#
+#PS# # The same first three triggers as the watchdog above, rebuilt rather than
+#PS# # shared: a CIM instance handed to two registrations is a subtle way to end
+#PS# # up with one task quietly missing a trigger.
+#PS# $aLogon = New-ScheduledTaskTrigger -AtLogOn -User $Me
+#PS# $aUnlock = New-CimInstance -CimClass (Get-CimClass -ClassName MSFT_TaskSessionStateChangeTrigger -Namespace $Ns) -ClientOnly
+#PS# $aUnlock.Enabled = $true
+#PS# $aUnlock.StateChange = 8
+#PS# $aUnlock.UserId = $Me
+#PS# $aResume = New-CimInstance -CimClass (Get-CimClass -ClassName MSFT_TaskEventTrigger -Namespace $Ns) -ClientOnly
+#PS# $aResume.Enabled = $true
+#PS# $aResume.Subscription = $sub
+#PS#
+#PS# # 00:04, not 00:05: the auth lane and the stale-run watchdog must not tick in
+#PS# # lockstep. Hourly for 24 h, borrowing a Repetition from a throwaway Once
+#PS# # trigger for the same reason the watchdog does.
+#PS# $aDaily = New-ScheduledTaskTrigger -Daily -At '00:04'
+#PS# $aDaily.Repetition = (New-ScheduledTaskTrigger -Once -At '00:04' -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition
+#PS# $aDaily.Repetition.StopAtDurationEnd = $false
+#PS#
+#PS# # WakeToRun FALSE, and here it is not merely polite: firing a two-factor
+#PS# # prompt at a sleeping user's phone is the original failure with extra steps.
+#PS# # The prompt is only answerable when somebody is awake, which is what the
+#PS# # logon/unlock/resume triggers are for. IgnoreNew because those three plus
+#PS# # the hourly tick can all land within one second. Fifteen minutes of
+#PS# # execution limit because a real fire waits on a real login; src\auth-retry.mjs
+#PS# # caps its own child at seven.
+#PS# $aSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+#PS# $aSettings.WakeToRun = $false
+#PS# $d = 'Weekly agenda auth watchdog. Runs src\auth-retry.mjs on logon, on unlock, on resume from sleep and every hour. When the LMS session is broken AND nothing has repaired it, it runs scripts\reauth.mjs --silent once and relays any number-matching prompt. Stops permanently on rejected credentials (data\auth-locked.json).'
+#PS# if (-not (Assert-Task ($prefix + ' AuthRetry') $aAction @($aLogon, $aUnlock, $aResume, $aDaily) $aSettings $d)) { $ok = $false }
+#PS#
 #PS# # ---- verify -------------------------------------------------------------
-#PS# Write-Host '[5/6] Verifying the watchdog triggers ...'
-#PS# $t = Get-ScheduledTask -TaskName ($prefix + ' StaleCheck')
-#PS# $kinds = @($t.Triggers | ForEach-Object { $_.CimClass.CimClassName })
-#PS# foreach ($w in @('MSFT_TaskLogonTrigger','MSFT_TaskSessionStateChangeTrigger','MSFT_TaskEventTrigger','MSFT_TaskDailyTrigger')) {
-#PS#   if ($kinds -contains $w) { Write-Host ('      OK      ' + $w) }
-#PS#   else { Write-Host ('      MISSING ' + $w); $ok = $false }
+#PS# Write-Host '[6/7] Verifying both watchdogs'' triggers and settings ...'
+#PS# foreach ($name in @(($prefix + ' StaleCheck'), ($prefix + ' AuthRetry'))) {
+#PS#   Write-Host ('      ' + $name)
+#PS#   $t = Get-ScheduledTask -TaskName $name
+#PS#   $kinds = @($t.Triggers | ForEach-Object { $_.CimClass.CimClassName })
+#PS#   foreach ($w in @('MSFT_TaskLogonTrigger','MSFT_TaskSessionStateChangeTrigger','MSFT_TaskEventTrigger','MSFT_TaskDailyTrigger')) {
+#PS#     if ($kinds -contains $w) { Write-Host ('        OK      ' + $w) }
+#PS#     else { Write-Host ('        MISSING ' + $w); $ok = $false }
+#PS#   }
+#PS#   $s = $t.Settings
+#PS#   if ($s.StartWhenAvailable -ne $true)      { Write-Host '        WRONG StartWhenAvailable'; $ok = $false }
+#PS#   if ($s.WakeToRun -ne $false)              { Write-Host '        WRONG WakeToRun'; $ok = $false }
+#PS#   if ($s.MultipleInstances -ne 'IgnoreNew') { Write-Host '        WRONG MultipleInstances'; $ok = $false }
+#PS#   if ($s.DisallowStartIfOnBatteries)        { Write-Host '        WRONG DisallowStartIfOnBatteries'; $ok = $false }
 #PS# }
-#PS# $s = $t.Settings
-#PS# if ($s.StartWhenAvailable -ne $true)      { Write-Host '      WRONG StartWhenAvailable'; $ok = $false }
-#PS# if ($s.WakeToRun -ne $false)              { Write-Host '      WRONG WakeToRun'; $ok = $false }
-#PS# if ($s.MultipleInstances -ne 'IgnoreNew') { Write-Host '      WRONG MultipleInstances'; $ok = $false }
-#PS# if ($s.DisallowStartIfOnBatteries)        { Write-Host '      WRONG DisallowStartIfOnBatteries'; $ok = $false }
+#PS#
+#PS# # A lockout survives re-registration, and it MUST look like it did. Deleting
+#PS# # that file restarts hourly attempts against a password the school already
+#PS# # rejected, which is how a stale agenda becomes a locked account.
+#PS# $lockFile = Join-Path $Repo 'data\auth-locked.json'
+#PS# if (Test-Path -LiteralPath $lockFile) {
+#PS#   Write-Host ''
+#PS#   Write-Host '  !! THE AUTH LANE IS LOCKED OUT and re-registering did NOT change that.'
+#PS#   Write-Host ('     ' + $lockFile + ' exists, which means the school rejected the stored')
+#PS#   Write-Host '     password. The lane will not fire until a human fixes the credentials:'
+#PS#   Write-Host '       node scripts/reauth.mjs --setup'
+#PS#   Write-Host '       node src/auth-retry.mjs --clear-lock'
+#PS#   Write-Host '     Do NOT simply delete that file. Retrying a rejected password locks accounts.'
+#PS# }
 #PS#
 #PS# Write-Host ''
-#PS# Write-Host '[6/6] Current state (read-only; nothing was started) ==='
+#PS# Write-Host '[7/7] Current state (read-only; nothing was started) ==='
 #PS# Get-ScheduledTask | Where-Object { $_.TaskName -like ($prefix + '*') } | Sort-Object TaskName | ForEach-Object {
 #PS#   $i = Get-ScheduledTaskInfo -TaskName $_.TaskName
 #PS#   '{0,-24} state={1,-8} triggers={2} last={3} next={4}' -f $_.TaskName, $_.State, $_.Triggers.Count, $i.LastRunTime, $i.NextRunTime

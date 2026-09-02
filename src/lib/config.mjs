@@ -153,6 +153,17 @@ export const DEFAULTS = Object.freeze({
     debounceMinutes: 25,
     maxRescuesPerLane: 2,
   },
+
+  // The hourly "can we still log in?" lane (src/auth-retry.mjs). `sessionFiles`
+  // is also its opt-out: a connector that exposes no readable session file gives
+  // that lane no way to tell "expired" from "never logged in", so an EMPTY list
+  // means "this lane does not apply here" rather than "fire forever".
+  authRetry: {
+    enabled: true,
+    sessionFiles: [".brightspace-mcp/session.json", ".d2l-session/session.json"],
+    minIntervalMinutes: 50,
+    pushHook: null,
+  },
 });
 
 /** The top-level keys this version knows about. Anything else warns, once. */
@@ -275,6 +286,7 @@ export function derive(cfg) {
       evening: `${prefix} Evening`,
       sync: `${prefix} Sync`,
       staleCheck: `${prefix} StaleCheck`,
+      authRetry: `${prefix} AuthRetry`,
     },
     skipCodes: new Set(skipped.map((c) => String(c.code ?? "")).filter(Boolean)),
     skipIds: new Set(skipped.map((c) => Number(c.id)).filter((n) => Number.isFinite(n))),

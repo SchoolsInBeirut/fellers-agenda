@@ -89,7 +89,7 @@ told".
 | exit | meaning | the run does | log token |
 |---|---|---|---|
 | **0** | re-auth worked, session refreshed | re-run the scrape **once**, continue normally, **no alarm** | `reauth=ok` |
-| **6** | a second-factor push was sent, never approved in time | one push + email: *"approve the next one and the agenda catches up automatically"*, then **STOP** | `reauth=MFA-PENDING` |
+| **6** | a second factor was raised and never answered in time | one push + email: *"the hourly auth lane raises a fresh prompt within the hour"*, then **STOP** | `reauth=MFA-PENDING` |
 | **5** | the stored password was rejected | push + email: *"run `--setup` to update it"*, **STOP** | `reauth=BAD-CREDS` |
 | **2** | no credentials saved yet | *"run `--setup` once to enable hands-free re-auth"*, **STOP** | `reauth=NO-CREDS` |
 | **7** | the LMS server package is missing | *"run the auth CLI once to reinstall"*, **STOP** | `reauth=NO-PACKAGE` |
@@ -109,11 +109,128 @@ Four rules bind this table:
 - **The light sync lane never scrapes, so it never invokes re-auth.** There is no
   branch for this in `runbooks/sync-run.md` and there should not be one.
 
-Exit 6 is the one worth dwelling on. "A push was sent and you did not approve it"
-is *not an error* — it is a completely normal thing to happen when a phone is in
-another room. The correct response is a friendly one-line note and a stop, and
-the next scheduled run picks it up. Reporting it as a failure trains the user to
-ignore auth notifications, and then a real one arrives.
+Exit 6 is the one worth dwelling on. "A second factor was raised and you did not
+answer it" is *not an error* — it is a completely normal thing to happen when a
+phone is in another room. The correct response is a friendly one-line note and a
+stop. Reporting it as a failure trains the user to ignore auth notifications, and
+then a real one arrives.
+
+---
+
+## The retry policy: who picks 6 back up
+
+The table above ends every failure at **STOP**, and for a long time that was the
+whole story: the next scheduled run tried again. On the shipped schedule that
+means the retry interval for a failed login is **eleven hours**, and if the
+evening run fails the same way it is eleven more.
+
+`src/auth-retry.mjs` is the lane that closes that gap. It runs on its own hourly
+scheduled task, it is the *only* thing in this repository that retries a login,
+and no run may invoke it. What it does with each exit code:
+
+| exit | token | the hourly lane |
+|---|---|---|
+| 0 | `ok` | done — deletes any lock file and goes quiet |
+| 1 | `FAILED` | retry in an hour |
+| 2 | `NO-CREDS` | retry in an hour |
+| **4** | `USAGE` | retry in an hour, **and let the failure counter climb** |
+| **5** | **`BAD-CREDS`** | **stop permanently** — writes `data/auth-locked.json` |
+| 6 | `MFA-PENDING` | retry in an hour — and raise a fresh prompt each time |
+| 7 | `NO-PACKAGE` | retry in an hour |
+
+**Exit 5 is the only stop, and it has to be.** Institutions lock accounts after a
+handful of rejected passwords. An hourly retry against one the school has already
+refused converts "my agenda is stale" - an inconvenience - into "I cannot log in
+to anything" - an afternoon with the help desk. So exit 5 leaves a tombstone and
+the lane never fires again. Two things follow from that, and both are load-bearing:
+
+- **The tombstone's existence is the lock.** There is no boolean anywhere else,
+  so the two cannot drift out of step, and a tombstone whose JSON will not parse
+  reads as *still locked* rather than as no lock. The only ways out are a
+  successful login, or a human running `--setup` and then `--clear-lock`.
+- **Nothing unknown may ever reach that state.** `classifyExit` maps every code
+  it does not recognise to `FAILED`, never to `BAD-CREDS`, and there is a test
+  asserting exactly that. A stop this expensive must be reachable only on
+  purpose.
+
+**Exit 4 (`USAGE`) is the interesting one**, because it is not a login failure at
+all: it means the lane called `reauth.mjs` wrongly, which is a bug in us.
+Retrying is harmless — no push, no network, instant — and it will never fix
+itself, so the useful behaviour is to retry *and* let `consecutiveFailures`
+climb. A digest that can say "the auth lane has failed twelve times with USAGE"
+names a code bug; one that silently stopped would hide it.
+
+`docs/design-notes/watchdogs.md` covers why this is a separate lane rather than a
+rule inside the run, and why the stale-run watchdog is *right* to stay silent
+while it happens.
+
+---
+
+## Number matching, and why "retry" and "relay" are one feature
+
+Everything above assumes that retrying a login is worth something. Under an
+approve/deny push it obviously is: the prompt goes to the phone, and a second
+attempt is a second chance at the same thing.
+
+**Under number matching it is worth nothing at all**, and this changes the design
+rather than decorating it.
+
+Some identity providers - Microsoft Entra prominently - no longer send an
+approve/deny push. Each sign-in renders a short number *on the sign-in page*, and
+the user must type that number into their authenticator app within roughly 60-90
+seconds. So:
+
+> A headless login raises a prompt **nobody can see**. That is not "a push the
+> user missed" — it is a prompt that was never answerable at all. Retrying it
+> hourly without relaying the number just repeats an unanswerable prompt forever.
+
+So the lane has a second job beside deciding *whether* to fire: it has to get the
+number in front of the user **while it is still worth typing**. Four things make
+that work, and each of them is defended by a test.
+
+1. **Capture.** The vendored login patch already polls every 500 ms waiting for
+   the second factor, so the number is one DOM read away. The probe sits at the
+   top of that loop, runs on every poll regardless of the current URL, and prints
+   `MFA-NUMBER: <n>` on the first sight of it. It is anchored to **strictly 1-3
+   digits**: relaying a *wrong* number is worse than relaying none, because the
+   user types it, so any other text in that element is discarded.
+2. **Streaming, never buffering.** The lane reads the login child's output line
+   by line as it arrives and calls its relay on the very line carrying the
+   digits. This is not a style preference. A buffered read hands you the number
+   when the child exits, which is minutes after it stopped working — the same as
+   not delivering it. There is a test that runs the real reader against a real
+   child and asserts the number reached the relay **more than 800 ms before the
+   child exited**; if anyone simplifies it back to a buffered call, that test
+   fails.
+3. **Fire-and-forget channels, file first.** `data/auth-mfa.json` is written
+   first because it is the only channel that cannot fail. Then an on-screen
+   alert, platform-dispatched. Then the optional push hook. None is awaited and
+   a channel that throws is swallowed — the login is sitting in a ninety-second
+   window and nothing may block it.
+4. **One prompt, one relay.** Only the first number is relayed. A resend would
+   overwrite a number the user is halfway through typing.
+
+And now the retry policy above earns its keep: an unanswered number prompt is
+still exit 6, still retried in an hour, **because each retry produces a fresh
+number and a fresh relay.** That is what makes hourly retrying useful here rather
+than merely noisy.
+
+### The honest gap
+
+The on-screen alert reliably reaches the **screen**. Whether it reaches the
+**phone** depends entirely on whether the user wrote a push hook, and that is a
+seam this repository documents rather than a provider it hard-codes.
+`docs/CONFIG.md` ships two working examples: a one-line hook that pushes through
+the Claude mobile app, and a `curl` to a self-hosted notification service for
+people who want sub-second delivery. Neither is installed by default and neither
+is required.
+
+The capture selector itself is **unverified in production.** It is the element
+Entra ships today and the code path is unit-tested end to end, but no run in this
+repository has yet met a live number-matching prompt to confirm it. Treat it as
+unverified until an `AUTH ` line in `data/runlog.txt` turns up carrying `mfa=<n>`.
+If it is wrong, the fix is one selector, and `data/reauth-last-output.txt` plus
+`node scripts/reauth.mjs --probe` are the two diagnostics for it.
 
 ---
 
@@ -173,16 +290,32 @@ the probe tells you what is actually being served now, and the fix is a selector
 update in the patch. Guessing at selectors without a probe is how an afternoon
 disappears.
 
+**The second diagnostic is the transcript.** Every non-probe run of
+`scripts/reauth.mjs` leaves the login child's whole output - already
+password-scrubbed, last 20 kB, overwritten each run - in
+`data/reauth-last-output.txt`. Before it existed, callers read one line out of
+that child and threw the rest away, which meant a crashed auth CLI and a lost
+second-factor prompt both reported as `reauth=FAILED exit 1` with a last line
+that named a Node version and nothing else. Those two have opposite fixes. The
+difference between them is always legible about fifteen lines earlier, and now it
+is kept. Writing that file is wrapped so it can never turn a working login into a
+failed one: an unwritable data directory is a diagnostics problem.
+
 ---
 
 ## What "hands-free" actually means
 
 It does not mean "no human ever touches it".
 
-It means: **the only recurring human step is approving an occasional push on a
-phone.** Setup is typed once. The trust-this-browser cookie lives in a persistent
-browser profile, so most re-auths skip the second factor entirely. Everything
-else — noticing the expiry, re-authenticating, re-running the scrape, continuing
-the run — happens without anyone being awake for it.
+It means: **the only recurring human step is answering an occasional second
+factor on a phone.** Setup is typed once. The trust-this-browser cookie lives in
+a persistent browser profile, so most re-auths skip the second factor entirely.
+Everything else — noticing the expiry, re-authenticating, retrying hourly until
+it works, re-running the scrape, continuing the run — happens without anyone
+being awake for it.
+
+The one thing it cannot do without you is a **rejected password**. That stops the
+lane on purpose, and it stays stopped until you type a new one. There is no way
+to automate that which does not also risk your account.
 
 That is the honest description, and it is the one the setup agent gives.

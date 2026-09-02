@@ -18,16 +18,21 @@
 // ---------------------------------------------------------------------------
 // WHAT IT READS  (nothing else; no network, no Brightspace, no Drive)
 //
-//   data/runlog.txt      three lanes share this file and this file is the only
+//   data/runlog.txt      four lanes share this file and this file is the only
 //                        durable record of what actually ran:
 //                          heavy lane - line STARTS with an ISO timestamp
 //                          sync  lane - line starts with the token `SYNC `
 //                          stale lane - line starts with the token `STALE `
-//                        The heavy question is answered ONLY by the heavy lane:
-//                        a `SYNC ` line means the light loop ran, which is not a
-//                        digest, and a `STALE ` line is this file's own voice.
-//                        Counting either as a heavy run is how a missed morning
-//                        digest silently marks itself delivered.
+//                          auth  lane - line starts with the token `AUTH `
+//                        The heavy question is answered ONLY by the heavy lane.
+//                        A `SYNC ` line means the light loop ran, which is not a
+//                        digest; a `STALE ` line is this file's own voice; and an
+//                        `AUTH ` line (src/auth-retry.mjs) is a LOGIN attempt,
+//                        not a run - it deliberately does not start with a bare
+//                        ISO stamp, so parseRunlog treats it as noise and it can
+//                        never be mistaken for a completed run. Counting any of
+//                        the three as a heavy run is how a missed morning digest
+//                        silently marks itself delivered.
 //   data/stale-check.json  {"lastFiredAt":ISO,"lastFired":"morning|evening|
 //                        sync","lastCheckAt":ISO} - the debounce memory.
 //
@@ -237,8 +242,8 @@ export function laneTasks(cfg) {
 
 const MIN = 60 * 1000;
 
-// An ISO instant as any of the three lanes writes one: `2026-09-01T13:40:00Z`,
-// with optional fractional seconds and an optional explicit offset.
+// An ISO instant as any of the lanes writes one: `2026-09-01T13:40:00Z`, with
+// optional fractional seconds and an optional explicit offset.
 const ISO = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?`;
 const HEAVY_RE = new RegExp(`^(${ISO})(?=\\s|$)`);
 const SYNC_RE = new RegExp(`^SYNC\\s+(${ISO})(?=\\s|$)`);

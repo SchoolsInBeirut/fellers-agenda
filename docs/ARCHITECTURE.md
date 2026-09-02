@@ -290,10 +290,10 @@ One door for "it is finished", forever.
 
 ---
 
-## The two watchdogs
+## The three watchdogs
 
-Every alarm assumes the run happens, so two independent things watch for it not
-happening:
+Every alarm assumes the run happens, and happens well, so three independent
+things watch for the cases where it does not:
 
 - **`stale-check.mjs`** runs *inside* the machine, on logon, unlock, resume and
   every 30 minutes. It catches a machine that was merely **asleep** at a
@@ -302,8 +302,24 @@ happening:
   sink, deleted and replanted by every successful run. It catches a machine that
   is **gone**, and it fires from a calendar service rather than from the machine
   that stopped.
+- **`auth-retry.mjs`** runs inside the machine on the same triggers, hourly, and
+  asks a different question: not *"did a run happen?"* but *"can we still log
+  in?"*. It catches the case the other two are **right** to ignore — a run that
+  fired exactly on time, hit an expired session, spent its one permitted re-auth,
+  and stopped. That run happened and that machine is alive, so neither of the
+  others has anything to say, and without this lane the retry interval for a
+  broken login is the gap to the next heavy run.
 
-Each one's blind spot is the other one's purpose.
+Each one's blind spot is another one's purpose.
+
+The auth lane is free on a healthy machine: it fires a login only when there is
+no session file at all, or the session is unusable **and** the newest failure is
+newer than the newest success. An expired session with nothing outstanding is the
+resting state between runs and is left alone.
+It stops permanently on a rejected password — retrying one an institution has
+already refused is how a stale agenda becomes a locked account — and where the
+second factor is number matching it relays the number the instant it appears,
+because a prompt nobody can see was never answerable at all.
 
 **The second one is Windows-only, and there is no substitute.** It has to ring
 from something that is not this machine, and the ICS sink writes a file on the

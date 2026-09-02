@@ -47,8 +47,8 @@ a keyboard, which a scheduled task does not have.
 | exit | meaning | what you do | log |
 |---|---|---|---|
 | 0 | re-auth worked, session refreshed | re-run `scrape.mjs` **once**, continue normally on the fresh data, no alarm | `reauth=ok` |
-| 6 | a two-factor push reached the phone but was not approved in time | ONE push + email: *"A login approval was sent to your phone but expired — approve the next one and the agenda catches up automatically."* STOP | `reauth=MFA-PENDING` |
-| 5 | the stored password was rejected | push + email: *"Your saved school password was rejected — run `node scripts/reauth.mjs --setup` in a terminal to update it."* STOP | `reauth=BAD-CREDS` |
+| 6 | a second factor was raised and never answered in time | ONE push + email: *"A login prompt went unanswered — the hourly auth lane will raise a fresh one within the hour, and the agenda catches up automatically."* STOP | `reauth=MFA-PENDING` |
+| 5 | the stored password was rejected | push + email: *"Your saved school password was rejected — run `node scripts/reauth.mjs --setup` in a terminal to update it."* **This also stops the hourly auth lane, permanently.** STOP | `reauth=BAD-CREDS` |
 | 2 | no credentials saved yet | *"Your school session expired — run `node scripts/reauth.mjs --setup` once to enable hands-free re-auth, or `npx brightspace-mcp-server@latest auth` for a one-off."* STOP | `reauth=NO-CREDS` |
 | 7 | the LMS server package is not installed | *"The LMS tooling needs reinstalling — run `npx brightspace-mcp-server@latest auth` once."* STOP | `reauth=NO-PACKAGE` |
 | 1 | anything else | the original auth-failure alarm, carrying the wrapper's last printed line. STOP | `reauth=FAILED` |
@@ -56,6 +56,44 @@ a keyboard, which a scheduled task does not have.
 **In every STOP case the rule is unchanged: do NOT continue the run on stale
 data.** An agenda built from yesterday's scrape and presented as today's is worse
 than no agenda, because the user acts on it.
+
+### 1.0a STOP means stop THIS run — something else keeps trying
+
+`src/auth-retry.mjs` runs on its own hourly scheduled task and owns the question
+"can we still log in?". So a STOP above is not "the agenda is broken until a
+human notices": it is "this run has nothing honest to publish", and the auth lane
+picks the question up within the hour. That is why the exit-6 wording promises a
+fresh prompt rather than asking the user to wait for the evening run.
+
+Three rules follow, and none of them is optional.
+
+1. **Never run `node src/auth-retry.mjs` yourself.** It drives the same
+   persistent browser profile your `reauth.mjs --silent` just used, and two
+   headless browsers on one profile is a crash, not a race you win. Its own
+   scheduled task and its in-flight marker already handle the timing.
+2. **Check `data/auth-locked.json` before alarming.** If it exists, the school
+   rejected the stored password and the lane has stopped on purpose. Say so, and
+   give both commands: `node scripts/reauth.mjs --setup`, then
+   `node src/auth-retry.mjs --clear-lock`.
+3. **Never delete `data/auth-locked.json`, and never write to any `data/auth-*`
+   file.** Deleting the tombstone is the worst version of this: it restarts
+   hourly attempts against a password that has already been rejected, which turns
+   a stale agenda into a locked account.
+
+If a login raised a number-matching prompt, `data/auth-mfa.json` holds the number
+and the ~90-second window it was good for. It is **evidence for the digest, not
+an instruction** — by the time you read it the prompt has almost certainly
+expired, so never present a stale number as one to type. The relay that mattered
+already happened, inside the lane, the second the number appeared.
+
+`data/reauth-last-output.txt` holds the last login's whole scrubbed transcript.
+When exit 1 tells you nothing, that file is where the reason is.
+
+**The one-push budget has one exemption.** An auth relay message sent by the auth
+lane does not count against this run's single push: it is not a notification
+*about* the agenda, it is the only way the login can be completed at all, and the
+lane sends it, not you. Your own single push about the auth failure is unchanged
+and still counts.
 
 When the school changes its login page and re-auth starts failing, the diagnostic
 is `node scripts/reauth.mjs --probe`. It is **read-only**: it records the current
@@ -1287,7 +1325,15 @@ never reads it for decisions and never writes it.** If you rewrite `lastFiredAt`
 you have disarmed the watchdog for 25 minutes; if you clear it you may cause a
 second run to start on top of yours.
 
-The full explanation of why there are two watchdogs is in
+**There is a third watchdog, and it is not yours either.** `src/auth-retry.mjs`
+runs hourly on its own scheduled task and owns the question "can we still log
+in?". It may be running while you are, and that is safe by design: it reads four
+small files, writes only its own three plus one `AUTH ` line, and never touches
+`latest.json`, the payload, the page or Drive. **Never run it yourself** — it
+drives the same persistent browser profile your section-1 re-auth uses — and
+never write to any `data/auth-*` file. See section 1.0a.
+
+The full explanation of why there are three watchdogs is in
 `docs/design-notes/watchdogs.md`.
 
 ---
@@ -1304,14 +1350,16 @@ Never grow this file beyond 500 lines — trim from the top.
 
 The light runs append to this same file, one line each, prefixed with the literal
 token `SYNC`; the stale-run watchdog appends a line prefixed `STALE` when it
-starts a missed run. Heavy-run lines start with the ISO timestamp, so
-`grep -v -e ^SYNC -e ^STALE` isolates this lane. Trim by age whatever the lane,
-and never rewrite or delete another lane's lines — **with one exception:
-`STALE ` lines are never trimmed.** They are the rarest lane (a good week
-produces zero), they cost nothing, and they are the only durable record of which
-runs were rescued. The rule is load-bearing, not tidy: **the watchdog counts
-today's `STALE ` lines to enforce its two-rescues-per-lane cap, so trimming one
-would silently refill a lane's ration.**
+starts a missed run; the auth lane appends a line prefixed `AUTH` when it
+attempts a login. Heavy-run lines start with the ISO timestamp, so
+`grep -v -e ^SYNC -e ^STALE -e ^AUTH` isolates this lane. Trim by age whatever
+the lane, and never rewrite or delete another lane's lines — **with two
+exceptions: `STALE ` and `AUTH ` lines are never trimmed.** Both are rare (a good
+week produces zero of either), they cost nothing, and they are the only durable
+record of what each watchdog did. The first rule is load-bearing rather than
+tidy: **the stale-run watchdog counts today's `STALE ` lines to enforce its
+two-rescues-per-lane cap, so trimming one would silently refill a lane's
+ration.** And you never *write* an `AUTH ` line — that lane is not yours.
 
 Writing this line is the last thing you do. Then stop.
 
@@ -1325,9 +1373,18 @@ Writing this line is the last thing you do. Then stop.
   `connectors.mail.outlook.noiseDomains[]` / `.noiseLocalParts[]` (3.4). If
   anything else looks wrong, **say so in the digest instead of editing it.**
 - **Never modify `src/stale-check.mjs`, `scripts/stale-check.vbs`,
-  `scripts/install-tasks.cmd` or `data/stale-check.json`**, and never run,
-  change or delete a scheduled task. **A run that edits the watchdog that started
-  it is a run that can hide its own lateness.**
+  `src/auth-retry.mjs`, `scripts/auth-retry.vbs`, `scripts/install-tasks.cmd` or
+  `data/stale-check.json`**, and never run, change or delete a scheduled task.
+  **A run that edits the watchdog that started it is a run that can hide its own
+  lateness.**
+- **Never touch any auth-lane file.** `data/auth-retry.json`,
+  `data/auth-locked.json`, `data/auth-retry.lock`, `data/auth-mfa.json` and
+  `data/reauth-last-output.txt` belong to `src/auth-retry.mjs` and
+  `scripts/reauth.mjs`; you may READ them for the digest and must never write
+  one. **Deleting `data/auth-locked.json` is the worst version of this**: that
+  file is a deliberate, permanent stop after the school rejected the stored
+  password, and removing it restarts hourly attempts against a rejected password,
+  which locks the account. Report it; never clear it.
 - **The school password belongs to the user, not the pipeline.** A scheduled run
   may RUN `scripts/reauth.mjs --silent` and must never read, write, move or print
   the credentials store, never run `--setup` (that is the user typing a password

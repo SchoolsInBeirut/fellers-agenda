@@ -1,7 +1,7 @@
-# Design note: two watchdogs, and why one is not enough
+# Design note: three watchdogs, and why one is not enough
 
-*Every alarm in this system assumes the run happens. These two exist for the case
-where it does not.*
+*Every alarm in this system assumes the run happens, and happens well. These three
+exist for the cases where it does not.*
 
 ---
 
@@ -21,7 +21,9 @@ everything is fine is exactly the evidence that everything has stopped.
 **No rule inside the pipeline can catch this, because the pipeline is what
 stopped.** Whatever notices has to be outside it.
 
-There are two ways to be outside it, and they catch different things.
+There are two ways to be outside it, and they catch different things. A third
+watchdog covers a case neither of them can see: a run that happened, on time, and
+failed at its first step.
 
 ---
 
@@ -170,19 +172,91 @@ do".
 
 ---
 
-## Why both
+## Watchdog 3 - the auth lane (a different question entirely)
 
-| | Stale-run check | Dead-man's switch |
-|---|---|---|
-| **Runs on** | This machine | A calendar service |
-| **Catches** | A machine that was asleep at the boundary | A machine that is gone |
-| **Notices within** | Seconds of the machine becoming usable | About 26 hours |
-| **Acts by** | Starting the missed run | Ringing the user's phone |
-| **Fails silently if** | The machine never wakes | Every run fails before it can arm |
+`src/auth-retry.mjs`, launched by `scripts/auth-retry.vbs` from a fifth scheduled
+task, on the same logon / unlock / resume triggers as the stale-run check but on
+an hourly floor instead of a half-hourly one.
 
-Each one's blind spot is the other one's whole purpose. One catches a machine
-that was merely asleep at 07:03; the other catches a machine that is not coming
-back. Neither is sufficient, and together they cover the space.
+**The two above ask "did a run happen?". This one asks "can we still log in?"**
+That distinction is the entire reason it exists, and it is easy to miss until you
+have watched it fail.
+
+Consider the sequence that produced it. The morning run fires exactly on time.
+It reads its runbook, calls `src/scrape.mjs`, and the scrape hits an expired
+session and exits 2. Per the runbook it tries `scripts/reauth.mjs --silent`
+exactly once - correctly, because a run that hammers a login is a run that locks
+an account - and that attempt fails. The run stops, writes its log line, and does
+not publish stale data. All of that is right.
+
+Now look at what the other two watchdogs see.
+
+- The stale-run check asks whether a run happened by the morning boundary. **It
+  did.** The check is satisfied and stays silent, which is the correct behaviour
+  for the question it is asking. No amount of tuning its grace period, its
+  debounce or its daily cap would have caught this, because nothing it measures
+  went wrong.
+- The dead-man's switch asks whether this machine is still alive. **It is.** It
+  is re-armed by the next lane that runs, so it never rings.
+
+So the agenda sits unauthenticated until the evening run, eleven hours later,
+which tries once more and stops for the same reason. Without this lane, the
+retry interval for a failed login is *half a day*.
+
+### What makes it free on a healthy machine
+
+The obvious rule - "retry whenever the session is expired" - is wrong, and
+expensively so. An LMS token lives about an hour and the heavy runs are eleven
+hours apart, so **an expired session is the pipeline's normal resting state for
+most of the day.** Firing on that alone would mean two dozen headless logins a
+day on a machine where nothing is wrong, each one able to raise a second-factor
+prompt at somebody who did not ask for one.
+
+The rule that works has two clauses, and only the second one is interesting:
+
+> **Unhealthy when there is no session file at all, or when the newest failure
+> is newer than the newest success.**
+
+The first clause is the trivial case: nothing to be authorised with. The second
+is what makes the lane free. Newest success is the session file's own
+`createdAt` - its mtime only as a fallback, when the JSON will not parse. Newest
+failure is `data/auth-failure.json`, which `src/scrape.mjs` writes the moment a
+source comes back 401. Either side may also be a success or failure this lane
+recorded itself. Expired *and* the last thing that happened was a failure means
+something is genuinely broken; expired with nothing outstanding is a machine
+resting between runs, and is left alone.
+
+### The one state it never retries
+
+Exit 5 - the school rejected the password. Institutions lock accounts after a
+handful of bad attempts, so an hourly retry against a rejected password converts
+"my agenda is stale" into "I cannot log in to anything". That case writes
+`data/auth-locked.json` and the lane stops permanently. The tombstone's
+*existence* is the lock - there is no boolean anywhere else, so the two cannot
+drift, and a tombstone that will not parse reads as still locked rather than as
+no lock. Every other exit code retries hourly.
+
+`docs/design-notes/auth-hardening.md` carries the full table, and the
+number-matching argument - which is where "retry" and "relay" turn out to be one
+feature rather than two.
+
+---
+
+## Why all three
+
+| | Stale-run check | Dead-man's switch | Auth lane |
+|---|---|---|---|
+| **Asks** | Did a run happen? | Is this machine alive? | Can we still log in? |
+| **Runs on** | This machine | A calendar service | This machine |
+| **Catches** | A machine that was asleep at the boundary | A machine that is gone | A run that happened and failed at step one |
+| **Notices within** | Seconds of the machine becoming usable | About 26 hours | An hour, or seconds of the machine waking |
+| **Acts by** | Starting the missed run | Ringing the user's phone | Retrying the login, and relaying any prompt it raises |
+| **Fails silently if** | The machine never wakes | Every run fails before it can arm | Never - a credential rejection stops it loudly and on purpose |
+
+Each one's blind spot is another one's whole purpose. The first catches a machine
+that was merely asleep at 07:03; the second catches a machine that is not coming
+back; the third catches the case both of the others are *right* to ignore. None
+is sufficient, and together they cover the space.
 
 ---
 
@@ -195,10 +269,18 @@ back. Neither is sufficient, and together they cover the space.
   logon, unlock and resume can all land within one second, and nothing fires
   twice inside the debounce window. Rewriting `lastFiredAt` disarms the watchdog
   for that window; clearing it may cause a second run to start on top of yours.
-- **Never make the watchdog log a heartbeat into the run log.** At fifty checks a
-  day it would bury both other lanes inside a day. `lastCheckAt` in
-  `data/stale-check.json` is the heartbeat, and it is the only proof the watchdog
-  itself is alive.
+- **Never make a watchdog log a heartbeat into the run log.** At fifty and
+  twenty-four checks a day respectively they would bury the run lanes inside a
+  day. `lastCheckAt` in `data/stale-check.json` and in `data/auth-retry.json` is
+  the heartbeat, and it is the only proof each watchdog is alive.
+- **Never delete `data/auth-locked.json`.** It is a deliberate, permanent stop
+  after a credential rejection. Deleting it restarts hourly attempts against a
+  password that has already been refused, which is the one failure mode in this
+  document that costs the user something they cannot undo themselves.
+- **Never run `src/auth-retry.mjs` from inside a run.** It drives the same
+  persistent browser profile the run's own re-auth uses, and two headless
+  browsers on one profile crash each other. Its scheduled task and its in-flight
+  marker already handle the timing.
 
 ---
 
@@ -209,6 +291,7 @@ Neither of these needs a scrape to inspect:
 ```
 node src/stale-check.mjs --dry-run --verbose   # the current verdict, changes nothing
 node src/deadman.mjs --status                  # what is armed right now
+node src/auth-retry.mjs --status               # what the auth lane sees, and its verdict
 ```
 
 And in the run log: `STALE ` lines are the rescues that happened, and

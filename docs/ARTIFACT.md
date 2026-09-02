@@ -237,6 +237,55 @@ document was not created.
 
 ---
 
+## 6a. How the week is laid out
+
+Worth knowing, because it is the part people ask about on a phone.
+
+**The grid draws one frame, not a scrollable day.** It shows the hours the week
+actually uses and folds the rest away. Concretely:
+
+- The range runs from the first thing that starts to the last thing that ends,
+  rounded outward to whole hours. A gap *between* two tasks is real information
+  about the day and is kept, to scale — only the dead ends are trimmed.
+- **A deadline at or after 23:00 pins to the foot of the frame instead of
+  dragging three empty hours into it.** Most course deadlines land at 11:59pm,
+  and the hours before them usually hold one line and nothing else; a literal
+  reading would mean the frame never trims at the bottom and the feature would do
+  nothing at all. A deadline at 21:30 is a real evening slot and opens the frame
+  normally. **The fold is stated, never hidden:** the foot rail reads
+  *"2 later hours · 4 due 11:59 PM"*.
+- The current time widens the frame only when it is already within two hours of
+  real content, so opening the page at 3am does not stretch the week to twenty-two
+  hours.
+- An empty week gets a plain working day (08:00–21:00) rather than a sliver, and
+  no frame is ever narrower than four hours.
+
+**Two rails hold what was folded.** One above the canvas, one below, each shown
+only when that side actually hides something, each carrying the count of what it
+holds and a full `aria-label`. Tapping one opens it and puts those hours back on
+their true line; tapping again folds them away. Navigating to another week
+re-folds both — a new week, a new frame.
+
+**Dragging a block past the edge opens the fold under your thumb.** The rail
+opens, the grid is redrawn at the new scale, and the gesture is handed to the new
+nodes rather than dropped, so a trimmed grid is never an unreachable one. Each
+side opens at most once per gesture.
+
+**The hour is sized from your viewport**, between a floor of 30px and a ceiling
+of 64px. The floor is a readability limit and it wins: when the range is long
+enough that honouring it would overflow the screen — both rails open on a
+fourteen-hour week, say — the canvas keeps its own scrollbar rather than squashing
+rows to illegibility. **That overflow scroll is the documented fallback, not a
+bug.** The ceiling stops the opposite failure, a four-hour week stretched into
+stripes.
+
+The scale stays a plain linear window throughout, which is why dragging still
+lands on the minute under the pointer: the position and the pointer-to-minute
+functions are exact inverses over any range. Nothing about the wire protocol,
+the payload, the document titles or the command bus changes with the layout.
+
+---
+
 ## 7. What the page will never do
 
 Worth knowing before you grant it anything:
@@ -266,6 +315,13 @@ Worth knowing before you grant it anything:
 - [ ] Within one pipeline run, that mark appears in `data/user-completions.json`.
 - [ ] Dragging a study block leaves a "pending" note, and the block is still in
       its new place after the next run.
+- [ ] On a phone, **the week is one frame and the page itself does not scroll.**
+- [ ] Both edge rails show a count; tapping one reveals the folded hours and
+      tapping it again folds them back.
+- [ ] Dragging a block down past the foot of the grid opens the fold *under the
+      drag* and the block lands in the hours that were folded away.
+- [ ] Dark mode looks right — the rails use existing theme tokens, so if they
+      look wrong in one theme they will look wrong in all three.
 - [ ] The **Ask** button appears (or is deliberately absent, if you dropped the
       `sample` block).
 - [ ] `config.json` has the artifact URL in `artifact.url`.

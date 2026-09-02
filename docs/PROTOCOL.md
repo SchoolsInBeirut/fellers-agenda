@@ -482,7 +482,14 @@ In order, and every one refuses the whole document:
 
 Nothing here consults the timetable: a block that overlaps a class meeting is
 **accepted**. The user chose that slot on a grid where the meeting was visible,
-and the user wins.
+and the user wins. That premise still holds under the trimmed one-frame grid, and
+is in fact stronger there: the frame is computed to include every class meeting
+in the week, so a meeting is not merely drawable but guaranteed on screen.
+
+**The layout does not reach the wire.** The grid's hour range, its edge rails and
+its fold are presentation only. A block dropped in hours that were folded a
+moment earlier emits exactly the same `{day, c, t, mins, prev?}` as any other,
+and is clamped by the same rules above.
 
 The page batches block edits on a **3-second debounce** and marks them *sent*,
 not *confirmed*. Only a payload that comes back carrying the slot proves the
@@ -505,6 +512,7 @@ code and never parse the output.
 | `src/behind.mjs` | a verdict was printed, *including* "behind" | — | usage | — | — | — | — |
 | `src/study-model.mjs` | ok | — | usage | a required input is missing | `--log` bucket is not a known bucket | — | — |
 | `src/stale-check.mjs` | a decision was reached, including "fired nothing" | the watchdog itself is broken | — | — | — | — | — |
+| `src/auth-retry.mjs` | a decision was reached, **including a login that failed** | the lane itself is broken | — | — | — | — | — |
 | `src/deadman.mjs` | armed, **or** skipped because no calendar sink is enabled | failed to arm — the previous event was **left in place** | the calendar backend is unavailable (`SKIPPED(com)`) | — | — | — | — |
 | `src/materials-sync.mjs` | ok, including "nothing new" | error | LMS session expired | skipped (disabled in config) | — | — | — |
 | `src/connectors/board-github.mjs` | file written | error on our side | — | skip — `gh` missing, unauthenticated, out of budget, or the service is unreachable | — | — | — |
@@ -521,6 +529,10 @@ Two of these deserve emphasis:
 
 - **`behind.mjs` exits 0 when the verdict is "behind".** A verdict is not an
   error, so a caller never has to distinguish bad news from a broken script.
+- **`auth-retry.mjs` exits 0 when the login it fired failed.** Same principle: a
+  failed login is that lane working, not that lane broken. Exit 1 means the lane
+  itself could not reach a decision. What it *did* is on the `AUTH ` line it
+  appended to `data/runlog.txt`, and only when it actually fired.
 - **`deadman.mjs` exit 1 leaves the previous event in place.** A failed re-arm
   must not disarm the switch you already had.
 - **`reauth.mjs` uses 5, 6 and 7 and skips 3 and 4.** The gaps are deliberate:
@@ -559,8 +571,14 @@ lose history, not correctness, except for the two marked **append-only**.
 | `gradescope.json` | the grades connector | `[ Grade ]` |
 | `calendar-map.json` | the calendar sink | `{ "<itemKey>": "<event id>" }` |
 | `materials-map.json` | `materials-sync.mjs` | what has already been downloaded |
-| `stale-check.json` | `stale-check.mjs` | the watchdog's own memory: last fire per lane |
+| `stale-check.json` | `stale-check.mjs` | the stale-run watchdog's memory: last fire per lane |
 | `deadman.json` | `deadman.mjs` | `{ eventId, armedUntil }` |
+| `auth-failure.json` | `scrape.mjs` | `{ at, connector, error }` — the last known auth break, and the auth lane's failure evidence |
+| `auth-retry.json` | `auth-retry.mjs` | the auth lane's memory and heartbeat: last check, attempt, success, failure, token, code, consecutive failures |
+| `auth-locked.json` | `auth-retry.mjs` | the bad-credentials tombstone. **Its existence is the lock.** Written on exit 5, removed only by a successful login or `--clear-lock` |
+| `auth-retry.lock` | `auth-retry.mjs` | an in-flight marker, created atomically and released in a `finally`. Stale after 10 min |
+| `auth-mfa.json` | `auth-retry.mjs` | `{ number, message, at, expiresAboutAt }` — a number-matching prompt, good for about 90 seconds |
+| `reauth-last-output.txt` | `reauth.mjs` | the last login's whole scrubbed transcript, last 20 kB, overwritten per run |
 | `payload.b64.txt` | `render.mjs` | the `AGD2` line the agent uploads |
 | `backup.b64.txt` | `drive-bundle.mjs --pack` | the `AGM2` line the agent uploads |
 | `runlog.txt` | the runbooks | one line per run |

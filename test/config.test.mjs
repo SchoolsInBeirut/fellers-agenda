@@ -213,6 +213,7 @@ test("derive: the default namespace produces the documented names", () => {
     evening: "Agenda Evening",
     sync: "Agenda Sync",
     staleCheck: "Agenda StaleCheck",
+    authRetry: "Agenda AuthRetry",
   });
   assert.equal(d.logPrefix, "[agenda]");
   assert.equal(d.sideBucket, "Side Project");

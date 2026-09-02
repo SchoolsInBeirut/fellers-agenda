@@ -108,10 +108,32 @@ Read the last few lines of `data/runlog.txt` if it exists. Report:
 - Any `STALE ` lines from today. Those are the watchdog rescuing a missed run,
   and **two of them for one lane in one day means something is failing before
   the run reaches its log step** and needs a human.
+- Any `AUTH ` lines. Those are the hourly auth lane attempting a login, and it
+  writes one only when it actually fired. A repeating `result=MFA-PENDING` means
+  nobody is answering the second factor; a `result=USAGE` means the lane is
+  calling `reauth.mjs` wrongly, which is a code bug rather than a login problem.
+
+Then run, and report:
+
+```
+node src/auth-retry.mjs --status
+```
+
+It prints the session file it resolved, whether that session is still valid, the
+newest success and failure it knows about, whether a lock is in force, and the
+verdict it would reach. **It writes nothing and starts no login.**
+
+**If `data/auth-locked.json` exists, lead with it.** The school rejected the
+stored password and the lane has stopped on purpose so it cannot lock the
+account. Give both commands and stop there: `node scripts/reauth.mjs --setup`
+(interactive — theirs to type), then `node src/auth-retry.mjs --clear-lock`.
+**Never delete that file yourself and never run `--clear-lock` for them**, since
+clearing it without a new password restarts hourly attempts against a rejected
+one.
 
 ## 6. Scheduling (only if they set it up)
 
-Windows: report whether the four tasks exist and when each last ran and next
+Windows: report whether the five tasks exist and when each last ran and next
 runs. Do not create, change, run or delete a task from this command — say what
 is wrong and let them run `scripts\install-tasks.cmd`, which is idempotent.
 

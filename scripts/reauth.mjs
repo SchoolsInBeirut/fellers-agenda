@@ -40,6 +40,13 @@
 // password is not: it locks the account. Collapsing the two into "auth failed"
 // is how a watchdog turns one missed notification into a lockout.
 //
+// THE TRANSCRIPT. Every non-probe run leaves the child's whole output - already
+// password-scrubbed, last 20 kB only - in `data/reauth-last-output.txt`,
+// overwritten each time. One exit code and one last line cannot tell a crashed
+// auth CLI apart from a two-factor prompt nobody answered, and those have
+// opposite fixes. The file is where that difference is legible. Writing it can
+// never fail the login: an unwritable data directory is a diagnostics problem.
+//
 // WHY THE SESSION FILE IS CHECKED AT ALL. An auth CLI that exits 0 without
 // writing a session has not logged anybody in - it has failed quietly. Reporting
 // that as success republishes a stale token as fresh and pushes the real failure
@@ -177,6 +184,43 @@ export function scrubSecret(text, secret) {
   const s = String(text ?? "");
   if (!secret) return s;
   return s.split(secret).join("«redacted»");
+}
+
+/** How much of a login transcript is worth keeping. Long enough to hold a stack
+ *  trace and the redirect chain above it; short enough that it can never grow. */
+export const TRANSCRIPT_MAX_BYTES = 20 * 1024;
+
+/** The tail of a transcript, with a marker so a truncated file is never mistaken
+ *  for a login that started there. Pure, so the cap has a test of its own. */
+export function transcriptTail(text, max = TRANSCRIPT_MAX_BYTES) {
+  const s = String(text ?? "");
+  if (s.length <= max) return s;
+  return `[...truncated: only the last ${max} characters are kept...]\n${s.slice(-max)}`;
+}
+
+/**
+ * Keep the login child's whole (already scrubbed) transcript, overwritten each
+ * run.
+ *
+ * WHY THIS EXISTS. Callers read ONE line out of this child - the last one - and
+ * throw the rest away. That is fine when the login works and useless when it
+ * does not: a crashed auth CLI and a lost two-factor prompt both report as
+ * `reauth=FAILED exit 1`, with a last line like `Node.js v24.12.0` that says
+ * nothing about either. The difference is always visible fifteen lines earlier.
+ *
+ * Wrapped so it can NEVER turn a successful login into a failure: an unwritable
+ * data directory is a diagnostics problem, not an auth problem.
+ */
+export function writeTranscript(dir, text, warn = () => {}) {
+  const out = join(dir, "reauth-last-output.txt");
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(out, transcriptTail(text), "utf8");
+    return out;
+  } catch (e) {
+    warn(`reauth: could not keep the login transcript (${e.message})`);
+    return null;
+  }
 }
 
 /**
@@ -493,7 +537,11 @@ async function main() {
   const before = sessionStamp(home);
   const { output, cliCode } = await run(cmd.command, cmd.args, cmd.env, { interactive: opts.mode === "setup" || !opts.silent });
   const after = sessionStamp(home);
-  const verdict = classifyResult({ output: scrubSecret(output, ""), sessionAdvanced: after > before, cliCode });
+  const scrubbed = scrubSecret(output, "");
+  const verdict = classifyResult({ output: scrubbed, sessionAdvanced: after > before, cliCode });
+
+  // The transcript outlives the one line printed below. See writeTranscript().
+  writeTranscript(resolveDataDir(argv, root), scrubbed, (m) => say(quiet, m));
 
   const advice = {
     5: " - fix the account itself; retrying will lock it. Run `node scripts/reauth.mjs --setup`",

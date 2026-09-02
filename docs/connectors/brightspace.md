@@ -131,6 +131,42 @@ campus selector -> SAML initiate -> Entra email -> Entra password
 
 The old selector never appears on that chain, so the wait never ends.
 
+### If your second factor is NUMBER MATCHING, read this before anything else
+
+Not every tenant sends an approve/deny push. Many now use **number matching**:
+the sign-in page renders a short number, and you type *that number* into your
+authenticator app within roughly 60-90 seconds.
+
+That is a different problem from a slow login, and it does not fix itself:
+
+> A headless browser renders that number on a page nobody is looking at. It is
+> not a prompt you missed — it is a prompt that was never answerable. Retrying it
+> without relaying the number repeats an unanswerable prompt forever.
+
+So **a connector whose identity provider uses number matching MUST capture and
+print that number, or its headless logins cannot succeed at all.** The vendored
+patch does: `vendor/brightspace-mcp-server/entra-duo-sso.patch` reads
+`#idRichContext_DisplaySign` (with `.displaySign` and
+`[data-testid='displaySign']` as fallbacks for older builds) on every poll of the
+second-factor wait, and logs
+
+```
+[WARN] MFA-NUMBER: 42 - enter this number in your authenticator app
+```
+
+`src/auth-retry.mjs` reads that line as it arrives and relays the number to
+`data/auth-mfa.json`, an on-screen alert, and your push hook if you wrote one.
+`docs/CONFIG.md` covers the hook; `docs/design-notes/auth-hardening.md` covers
+why relay and retry are one feature rather than two.
+
+**That selector is unverified in production.** It is the element Entra ships
+today, the code path is unit-tested end to end, and the patch loads cleanly - but
+no run in this repository has yet met a live number-matching prompt to confirm
+it. Treat it as unconfirmed until an `AUTH ` line in `data/runlog.txt` turns up
+carrying `mfa=<n>`. If it is wrong the fix is one selector, and
+`data/reauth-last-output.txt` plus `node scripts/reauth.mjs --probe` are the two
+diagnostics for it.
+
 ### Fix A — install from upstream `main` (try this first)
 
 The fixes may already be merged upstream even when they are not on npm yet, and
@@ -269,7 +305,7 @@ is at least five different problems with five different fixes:
 | exit | token | meaning | what happens |
 |---|---|---|---|
 | 0 | `ok` | worked | the scrape re-runs **once**, the run continues, no alarm |
-| 6 | `MFA-PENDING` | a push was sent and not approved in time | one friendly note, then stop. **Not an error** — approve the next one |
+| 6 | `MFA-PENDING` | a second factor was raised and not answered in time | one friendly note, then stop. **Not an error** — the hourly auth lane raises a fresh prompt within the hour |
 | 5 | `BAD-CREDS` | the stored password was rejected | *"run `--setup` to update it"*, stop |
 | 2 | `NO-CREDS` | nothing saved yet | *"run `--setup` once"*, stop |
 | 7 | `NO-PACKAGE` | the LMS server package is missing | *"run the auth CLI once"*, stop |
@@ -285,8 +321,18 @@ credentials store.
 from yesterday's scrape and presented as today's is worse than no agenda, because
 you act on it.
 
+**A run tries once; something else keeps trying.** `src/auth-retry.mjs` runs on
+its own hourly scheduled task and is the only thing in this repository that
+retries a broken login. It is free on a healthy machine — it fires only when
+there is no session file at all, or the session is unusable *and* the last thing
+that happened was a failure — and it stops permanently on exit 5, because
+retrying a rejected password locks accounts.
+`node src/auth-retry.mjs --status` prints what it can see without starting
+anything.
+
 `docs/design-notes/auth-hardening.md` has the full reasoning and the security
-model.
+model; `docs/design-notes/watchdogs.md` explains why the hourly lane is separate
+from the stale-run watchdog.
 
 ---
 

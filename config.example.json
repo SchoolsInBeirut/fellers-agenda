@@ -163,5 +163,13 @@
     "graceMinutes": 20,
     "debounceMinutes": 25,
     "maxRescuesPerLane": 2
+  },
+
+  "authRetry": {
+    "_comment": "The hourly 'can we still log in?' lane. sessionFiles are checked under your home directory in order, and the first one that exists is read; an EMPTY list opts this lane out entirely, which is the right answer for a connector that keeps no session file. pushHook is an optional script run with the message as %1 and the number as %2 when a number-matching prompt appears - docs/CONFIG.md has a working one-liner.",
+    "enabled": true,
+    "sessionFiles": [".brightspace-mcp/session.json", ".d2l-session/session.json"],
+    "minIntervalMinutes": 50,
+    "pushHook": "[NOT SET]"
   }
 }

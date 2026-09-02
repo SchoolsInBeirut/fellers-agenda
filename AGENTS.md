@@ -36,7 +36,9 @@ canonical ones; prefer them in prose, in digests and in commit messages.
 |---|---|
 | **heavy run** (`runbooks/heavy-run.md`) | full run, morning run, main run |
 | **light run** (`runbooks/sync-run.md`) — the run itself | sync run, sync lane. (*The **light lane** is the schedule slot it runs in; see the next row — that phrase is correct.*) |
-| **lane** — a schedule slot: the heavy lane, the light lane, the watchdog lane | pipeline, job, task (except the literal Windows scheduled task) |
+| **lane** — a schedule slot: the heavy lane, the light lane, the watchdog lane, the auth lane | pipeline, job, task (except the literal Windows scheduled task) |
+| **the auth lane** — `src/auth-retry.mjs`, the hourly "can we still log in?" watchdog | the retry lane, the login watchdog, auth-retry |
+| **the stale-run watchdog** — `src/stale-check.mjs`, the "did a run happen?" one | the watchdog (ambiguous now that there are three), stale-check |
 | **the setup agent** (`.claude/agents/onboarding.md`, named `onboarding`) | setup wizard, the wizard |
 | **the preflight** — `scripts/validate-setup.mjs` | the doctor, the checker |
 | **the doctor** — the `/agenda-doctor` command, which *runs* the preflight | validate-setup, the health check |
@@ -91,7 +93,8 @@ src/behind.mjs            the 7-rule clear / notice / behind verdict
 src/render.mjs            payload build + page build
 src/command-ingest.mjs    the phone -> pipeline one-way command bus
 src/drive-bundle.mjs      state mirror pack/restore + local backup
-src/stale-check.mjs       in-machine stale-run watchdog
+src/stale-check.mjs       in-machine stale-run watchdog ("did a run happen?")
+src/auth-retry.mjs        in-machine auth watchdog ("can we still log in?")
 src/deadman.mjs           off-machine dead-man's switch
 src/materials-sync.mjs    course-file downloader
 
@@ -127,7 +130,9 @@ Every CLI accepts `--config <path>` and `--data <dir>`. Without them it uses
 | `node src/drive-bundle.mjs --restore <file>` | Unpack a mirror into a dated folder. Never run this on a schedule |
 | `node src/materials-sync.mjs` | Download new course files |
 | `node src/deadman.mjs --arm \| --status` | Plant / inspect the off-machine watchdog |
-| `node src/stale-check.mjs --dry-run --verbose` | Print the watchdog's current verdict |
+| `node src/stale-check.mjs --dry-run --verbose` | Print the stale-run watchdog's current verdict |
+| `node src/auth-retry.mjs --status` | Print what the auth lane can see and the verdict it would reach. Writes nothing, starts no login |
+| `node src/auth-retry.mjs --clear-lock` | Remove `data/auth-locked.json` **after** a human has fixed the credentials. Never run this to make an alarm go away |
 | `node scripts/demo.mjs` | Render `demo-agenda.html` from `fixtures/demo/`. No accounts |
 | `node scripts/validate-setup.mjs` | Preflight every prerequisite, with a fix link per failure. Touches no network |
 | `node scripts/health-check.mjs` | Ask every **enabled** connector's `healthCheck()` whether its backend answers. Writes nothing; `--json` for the machine-readable form |
@@ -153,6 +158,7 @@ silently doing the default thing.
 | `materials-sync.mjs` | ok | error | auth | disabled in config | — | — | — | — |
 | `deadman.mjs` | armed, **or** skipped because no calendar sink can host it | could not arm | the calendar backend is unavailable | — | — | — | — | — |
 | `stale-check.mjs` | a decision was reached | the watchdog itself is broken | — | — | — | — | — | — |
+| `auth-retry.mjs` | a decision was reached — **including a login that failed** | the lane itself is broken (bad argument, unwritable state) | — | — | — | — | — | — |
 | `board-github.mjs` | ok | config/output error | — | skipped (`gh` missing, unauthenticated, out of budget) | — | — | — | — |
 | `validate-setup.mjs` | every check passed | at least one check failed | — | — | — | — | — | — |
 | `health-check.mjs` | every enabled connector answered, or none is enabled | at least one could not answer — the reasons are printed | — | — | — | — | — | — |
@@ -161,8 +167,58 @@ silently doing the default thing.
 `completion.mjs` exit 6 is a feature, not a bug. It has exactly three causes and
 all three print what to do next. **Do not paper over it.**
 
-`reauth.mjs` exit 6 is not a failure either: a push nobody approved is a phone in
-another room. Retry that next run; never retry exit 5, which locks accounts.
+`reauth.mjs` exit 6 is not a failure either: a prompt nobody answered is a phone
+in another room. Retry that; never retry exit 5, which locks accounts.
+
+### Who retries which reauth exit code
+
+**You do not.** `src/auth-retry.mjs` owns this, on its own hourly task. A run
+fires `scripts/reauth.mjs --silent` at most once, per `runbooks/heavy-run.md`,
+and then hands the question over.
+
+| Exit | Token | The hourly lane's response |
+|---|---|---|
+| 0 | `ok` | done; it deletes any lock file and goes quiet |
+| 1 | `FAILED` | retry in an hour |
+| 2 | `NO-CREDS` | retry in an hour |
+| 4 | `USAGE` | retry in an hour — but this one means the lane called `reauth.mjs` wrongly, so `consecutiveFailures` climbing with `lastToken: "USAGE"` is a code bug worth reporting, not a login problem |
+| **5** | **`BAD-CREDS`** | **STOP, permanently.** Writes `data/auth-locked.json` and never fires again |
+| 6 | `MFA-PENDING` | retry in an hour — and each retry raises a *fresh* prompt, which is what makes retrying useful rather than merely noisy |
+| 7 | `NO-PACKAGE` | retry in an hour |
+
+**An agent must never delete `data/auth-locked.json`.** Its existence *is* the
+lock; there is no boolean anywhere else, so the two cannot drift, and an
+unparseable tombstone reads as still locked rather than as no lock. Deleting it
+restarts hourly attempts against a password the school has already rejected,
+which is how "the agenda is stale" becomes "I cannot log in to anything". The
+only two ways out are a successful login, or a human who has run
+`node scripts/reauth.mjs --setup` and then `node src/auth-retry.mjs --clear-lock`.
+
+Report the file in the digest. Do not act on it.
+
+### The run log has four lanes
+
+`data/runlog.txt` interleaves four voices, and every consumer keys off the prefix:
+
+| Line starts with | Written by | Means |
+|---|---|---|
+| a bare ISO instant | a heavy run | a full run completed |
+| `SYNC ` | a light run | a light run completed |
+| `STALE ` | `src/stale-check.mjs` | a missed lane was rescued |
+| `AUTH ` | `src/auth-retry.mjs` | a login was attempted, with its result |
+
+Only the first two are evidence that a RUN happened. `AUTH ` is deliberately
+inert to `stale-check.mjs`'s parser — an auth line counted as a completed run
+would silently mark a missed morning digest as delivered. If you ever trim this
+file, **never drop a `STALE ` or `AUTH ` line**: they are the only record either
+watchdog keeps of what it did.
+
+### Do not modify these while a run is in flight
+
+`src/stale-check.mjs`, `src/auth-retry.mjs`, `scripts/install-tasks.cmd`, and
+anything under `data/` beginning `auth-`. A scheduled run does not own the
+watchdog lanes, and running `src/auth-retry.mjs` by hand during a run is how two
+headless browsers end up on one profile.
 
 ---
 
