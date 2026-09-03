@@ -11,9 +11,12 @@ is the honest answer to "does this still work?" — not the release date.
 
 ## [1.2.0] — 2026-09-03
 
-**Last verified working: 2026-09-03** (Node 22.x and 24.x, Windows 11, Claude
-Code, Google Drive through the Claude connector, the published page's `mcp` and
-`sample` capabilities.)
+**Last verified working: 2026-09-03** (Node 22.x and 24.x, Windows 11: the
+full suite, including the jsdom-booted page cases and the command-bus round
+trip against the real `validateAdd`. The live path through the published page's
+`mcp` and `sample` capabilities was NOT exercised for this release — the
+connector-consent prompt is the owner's to accept — so the last live
+verification of the Drive write machinery this feature reuses remains 1.1.1's.)
 
 The page could read a week and settle work; it could not create any. This
 release closes that: the "Ask" panel can add a task, and the task goes out on
