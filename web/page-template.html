@@ -3444,7 +3444,7 @@ function edgeRailHtml(win, side) {
     : "Show " + n + " " + (side === "up" ? "earlier" : "later") + " hour" + (n === 1 ? "" : "s") +
       (due ? ", holding " + due + " deadline" + (due === 1 ? "" : "s") + " due at 11:59 PM" : "");
   /* the chevron points where the tap sends the canvas edge */
-  var caret = (side === "up") === !open ? "▴" : "▾";
+  var caret = (side === "up") === !open ? "\u25B4" : "\u25BE";
   return '<button type="button" class="tg-edge tg-edge-' + side + (open ? " open" : "") +
     '" data-edge="' + side + '" aria-expanded="' + (open ? "true" : "false") +
     '" aria-label="' + esc(aria) + '">' +
@@ -5415,7 +5415,7 @@ function chatContext() {
     var meets = meetsFor(dks[di], d.schedule || []);
     for (i = 0; i < meets.length; i++) {
       var m = meets[i];
-      L.push("Class " + word + ": " + m.c + " " + minLabel(m.sm) + "–" + minLabel(m.em) +
+      L.push("Class " + word + ": " + m.c + " " + minLabel(m.sm) + "\u2013" + minLabel(m.em) +
         (m.room ? " in " + m.room : "") +
         (m.attend === false ? " (not attended in person)" : ""));
     }
@@ -5434,14 +5434,14 @@ function chatContext() {
     var word2 = st === "done" ? "DONE"
       : st === "cancelled" ? "WON'T DO"
       : (it.ms < now ? "OVERDUE" : "todo");
-    var title = it.t.length > 80 ? it.t.slice(0, 79) + "…" : it.t;
+    var title = it.t.length > 80 ? it.t.slice(0, 79) + "\u2026" : it.t;
     L.push("[" + chatRef(it.k) + "] " + it.c + " " + it.ty + ' "' + title + '" due ' +
       F_STAMP.format(new Date(it.ms)) + " - " + word2 +
       (it.s === true ? " (submitted)" : "") +
       (it.g ? " (grade " + it.g + ")" : "") +
       (it.a ? " (~date approximate)" : ""));
   }
-  if (omitted) L.push("…" + omitted + " later items omitted.");
+  if (omitted) L.push("\u2026" + omitted + " later items omitted.");
 
   var fb = prepFocus(d);
   var blines = [];
@@ -5456,8 +5456,8 @@ function chatContext() {
       if (mk && comp.merged[mk] !== undefined)
         mstate = comp.merged[mk].state === "cancelled" ? "won't do" : "done";
       blines.push((mk ? "[" + chatRef(mk) + "] " : "") + b.c + " study " +
-        minLabel(b.sm) + "–" + minLabel(b.em) + (di === 0 ? " today" : " tomorrow") +
-        (b.what ? " — " + b.what : "") + " - " + mstate);
+        minLabel(b.sm) + "\u2013" + minLabel(b.em) + (di === 0 ? " today" : " tomorrow") +
+        (b.what ? " \u2014 " + b.what : "") + " - " + mstate);
     }
   }
   if (blines.length) {
@@ -5579,7 +5579,7 @@ async function chatSend() {
   chatNoteShow(null);
   chatBubble("user", msg);
   chat.turns.push({ role: "user", content: msg });
-  var bot = chatBubble("bot thinking", "Thinking…");
+  var bot = chatBubble("bot thinking", "Thinking\u2026");
   chat.busy = true;
   chat.ctl = new AbortController();
   btn.textContent = "Stop";
