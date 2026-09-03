@@ -9,6 +9,68 @@ is the honest answer to "does this still work?" — not the release date.
 
 ---
 
+## [1.2.0] — 2026-09-03
+
+**Last verified working: 2026-09-03** (Node 22.x and 24.x, Windows 11, Claude
+Code, Google Drive through the Claude connector, the published page's `mcp` and
+`sample` capabilities.)
+
+The page could read a week and settle work; it could not create any. This
+release closes that: the "Ask" panel can add a task, and the task goes out on
+the command bus the page already writes.
+
+### Added — the Ask panel can add a task
+
+- **A fourth chat tool, `add_item`.** Ask for a task with a title and a due date
+  and it appears on the grid immediately, badged *pending sync*, and joins the
+  agenda properly on the next pipeline run. It refuses a bucket the payload does
+  not name, a date outside `[today-7, today+365]`, a title that normalises to
+  nothing, and a twin of something already on the agenda or already queued — and
+  it says which, in words the panel can read back to you.
+- **A pending-sync overlay, `<ns>.adds.v1`.** Its own `localStorage` key, never
+  the marks or blocks one, capped at fifty entries. Queued adds are merged into
+  the item list at data-normalisation time rather than patched into the DOM, so
+  they survive a re-render and a reload, and every renderer, count and briefing
+  sees one list.
+- **A badge that says what is true rather than what is convenient.** *Pending
+  sync* — including after the command document is written, because a write that
+  resolved is proof a document exists, not proof the pipeline accepted it.
+  *Sync failed*, with a Retry, because a rejected write is not proof the document
+  was not created and an unattended retry is how one task becomes four. *Not
+  accepted by sync*, with a Dismiss, when a payload generated more than ten
+  minutes after the write comes back without it.
+- **No tick on a queued add, anywhere.** No ring, no Done, no Won't do, no Undo —
+  on the chip, in the open card, in the Later list or in the plan — and the three
+  mark tools refuse the key outright. There is nothing on the far side to mark
+  yet, and a completion written for a key no pipeline has heard of would never
+  resolve against anything.
+- The due time is worked out through `Intl` **at the instant in question**, so a
+  build in a zone that observes daylight saving stores the right instant in
+  December as well as in September. A runtime that cannot resolve
+  `config.timezone` refuses the add rather than storing a time computed in
+  whatever zone the laptop happens to be in.
+
+### Protocol — no pipeline change was needed
+
+- `add` has been one of the seven ops on the `AGQ1` command bus since the bus
+  existed, and `command-ingest.mjs` already appends it to `data/phone-items.json`
+  with `cid: 0` and `src: ["phone"]`. **No `*.mjs`, no runbook and no config key
+  changed in this release** — the page simply started emitting a command the bus
+  already accepted. `docs/PROTOCOL.md` §3 and §7 now document the browser key and
+  the page's own validation; `docs/ARTIFACT.md` §3 notes the fourth tool needs
+  the `mcp` block's `create_file`.
+- Adds and block drags never share a document. Validation is fail-closed per
+  document, so one refused add would take an unrelated drag down with it: two
+  queues, two flushes, one document per kind.
+
+### Fixed
+
+- `web/page-template.html` is now byte-for-byte ASCII. Eight characters (two
+  triangles, two en dashes, one em dash, three ellipses) inside JS string
+  literals are the exactly equivalent `\uXXXX` escapes.
+
+---
+
 ## [1.1.1] — 2026-09-02
 
 **Last verified working: 2026-09-02.** The auth watchdog's MFA-number relay was
