@@ -195,15 +195,48 @@ computed and nothing re-derives them.
 
 ### Browser storage
 
-The page keeps two keys in `localStorage`, both named by the build:
+The page keeps three keys in `localStorage`, all named by the build:
 
 | Key | Holds |
 |---|---|
 | `<ns>.marks.v1` | `{ "v": 1, "marks": {...}, "cleared": {...} }` — this browser's optimistic marks and tombstones |
 | `<ns>.blocks.v1` | block edits this browser has made, with their sync state |
+| `<ns>.adds.v1` | tasks added in the Ask panel that no payload has come back with yet |
 
 Two agendas with different namespaces never share a key, so one person can run a
 term agenda and a project agenda in the same browser.
+
+`<ns>.adds.v1` is the newest of the three and has its own shape:
+
+```jsonc
+{
+  "v": 1,
+  "items": {
+    "0::task::ship the demo deck": {
+      "k": "0::task::ship the demo deck",  // normTitle(t), the key the bus derives
+      "c": "Side Project",                 // a bucket the payload already names
+      "t": "Ship the demo deck",
+      "d": "2026-09-05T03:59:00.000Z",     // an instant, converted from local 23:59
+      "ty": "task",
+      "desc": "PR 305 first",
+      "at": "2026-09-04T18:00:00.000Z",    // when it was asked for
+      "sync": "pending",                   // pending | sent | failed | refused
+      "sentAt": null,                      // set when a command doc carried it
+      "errCode": null                      // the code that rejected the write
+    }
+  }
+}
+```
+
+Fifty entries at most, and it is a queue rather than a second agenda. The four
+`sync` states are the same posture the block overlay takes: `pending` is queued
+with nothing on the wire, `sent` means a command document carries it and is
+**not** a confirmation, `failed` means a write was rejected and only a press
+retries it, and `refused` means a payload generated more than ten minutes after
+the write came back without the key. Every payload the page applies reconciles
+this map: an entry whose key the payload carries is deleted, because the real
+item won. Nothing here is ever read by the pipeline — it is this browser's
+memory of what it has asked for.
 
 ---
 
@@ -427,12 +460,33 @@ Everything not on this list is refused **by name**.
 | Op | Arguments | What it does |
 |---|---|---|
 | `defer` | `{k, to, why}` | Records an override: this item is now due later. **Never for `ty: "exam"`** — the institution sets that date, not a phone. `to` must be later than the current effective due, so a defer can only buy time, never manufacture an alarm. Written to `data/overrides.json`; the scraped date in `data/latest.json` is never rewritten, so the override is reversible by deleting one key. |
-| `add` | `{c, t, d, ty, desc}` | A task the phone knows about and the LMS does not. A real ISO `d` is mandatory (undated things are not items) and `ty` must be `"task"` — deliverables come from the scrape, never from a thumb. Appended to `data/phone-items.json` with `cid: 0` and `src: ["phone"]`. |
+| `add` | `{c, t, d, ty, desc}` | A task the phone knows about and the LMS does not. A real ISO `d` is mandatory (undated things are not items) and `ty` must be `"task"` — deliverables come from the scrape, never from a thumb. Appended to `data/phone-items.json` with `cid: 0` and `src: ["phone"]`. **The page's Ask panel emits this too**, through its `add_item` tool — see below. |
 | `note` | `{day, text}` | One line appended to `data/focus-note.txt`. 90 characters, because it has to fit on a focus strip. |
 | `logstudy` | `{c, mins, note}` | Routed through `study-model.mjs --log` as a child process. The bus never hand-edits the study log: the bucket check, the append semantics and the mirror into the materials tree live in one place. |
 | `attending` | `{date, value}` | Evidence about a standards sitting, written onto the matching `data/study-plan.json` entry. Refused when no sitting has that date — inventing a sitting from a phone is exactly the phantom exam the rules forbid. |
 | `snooze` | `{hours, why}` | `data/snooze.json`. Suppresses **pushes only**. It never suppresses a calendar alarm: those are already on the phone, the user set them up to be un-ignorable, and a snooze means "stop nagging me", not "let me miss my exam". |
 | `block` | `{day, c, t, mins, prev?}` | A focus block the user dragged or resized on the published grid. Written to `data/block-edits.json` and nothing else: a block is a plan for an hour, not a fact about one, so it never touches items, marks or the study log. `prev` is what the engine had shipped for that `(day, c)` before the drag — the learning sample — and is optional, because a block the user invented has no "before". |
+
+### `add` from the page, not only from a phone
+
+The Ask panel's fourth tool, `add_item`, writes an `add` onto this same bus. It
+validates before it queues anything, so a command the ingester would refuse
+should never reach a document in the first place:
+
+| The page checks | Because |
+|---|---|
+| `course` is exactly one of the payload's own buckets (`Object.keys(weights)`) | a bucket the config does not know is refused by the bus anyway, and the refusal is more useful in the chat than in a log |
+| `title` trims to 1–120 characters and `normTitle(title)` is non-empty | the key is `0::task::<normTitle(title)>`; a title that normalises away has no stable key |
+| that key is not already a payload item, and not already queued | `validateAdd` refuses a twin, and a document refused whole would take any other command with it |
+| `due` is a real `YYYY-MM-DD` inside `[today-7, today+365]` | `"2026-09-31"` matches the shape and is not a day |
+| `time` is a 24-hour `HH:MM`, defaulting to `23:59` | the foot rail already pins the end of the day there |
+| the local wall clock converts to an instant through `Intl` at that instant | a hard-coded offset puts half a term's deadlines an hour out across a daylight-saving boundary; a runtime that cannot resolve `CFG.timezone` refuses rather than storing an instant computed in the wrong zone |
+| the overlay holds fewer than 50 entries | it is a queue, not a second agenda |
+
+Adds and block drags are **never mixed into one document**, even when they are
+queued in the same second. Validation is fail-closed per document, so one
+refused add would take an unrelated drag down with it. Two queues, two flushes,
+one document per kind.
 
 **`done` is refused, explicitly.** Completion is not expressible on this bus.
 Marks travel on `AGC1`, or through `completion.mjs --done "<query>"`. One channel

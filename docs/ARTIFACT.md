@@ -141,7 +141,7 @@ credentials, from your browser. Three tools, and no more:
 |---|---|
 | `search_files` | finding the newest `<ns>-data` and `<ns>-completions` documents |
 | `read_file_content` | reading them |
-| `create_file` | writing `<ns>-completions` (your marks) and `<ns>-commands` (block drags) |
+| `create_file` | writing `<ns>-completions` (your marks) and `<ns>-commands` (block drags, and tasks the Ask panel adds) |
 
 `trash_file` is **deliberately absent**. The page has no way to know whether the
 pipeline has consumed a document yet, so it never deletes one; cleanup happens on
@@ -150,11 +150,20 @@ is a consented grant — a page that asks for less is a page you can approve
 without thinking hard.
 
 **`sample`** is the "Ask" panel: it runs a conversation about your week on your
-own Claude plan. It has three tools of its own — mark done, mark won't-do, clear
-a mark — which write through the same store a click does, so a chat-made mark and
-a tapped one are indistinguishable downstream. If you do not want the panel,
-remove the `sample` block; everything else keeps working and the button hides
-itself.
+own Claude plan. It has four tools of its own — mark done, mark won't-do, clear
+a mark, and add a task — of which the first three write through the same store a
+click does, so a chat-made mark and a tapped one are indistinguishable
+downstream. If you do not want the panel, remove the `sample` block; everything
+else keeps working and the button hides itself.
+
+The fourth tool, **`add_item`**, needs the `mcp` block above as well as this one:
+it writes a `<ns>-commands` document through `create_file`, exactly the way a
+block drag does. With `sample` but no `mcp`, the panel still accepts a task and
+keeps it in this browser, badged *pending sync*, and sends it the moment a
+connector appears; with neither, there is no panel and no way to add anything.
+A task added this way is never a graded deliverable — those come from the scrape
+— and it only becomes a real agenda item when the pipeline picks the command up
+on its next run, usually within a couple of hours.
 
 Neither capability is required. With no capabilities at all the page still
 renders the week it was built with; it just says *"live refresh unavailable
@@ -324,5 +333,7 @@ Worth knowing before you grant it anything:
       look wrong in one theme they will look wrong in all three.
 - [ ] The **Ask** button appears (or is deliberately absent, if you dropped the
       `sample` block).
+- [ ] Ask the panel to add a task; it shows on the grid straight away with a
+      **pending sync** badge, and no tick.
 - [ ] `config.json` has the artifact URL in `artifact.url`.
 - [ ] The artifact is still **private**.
