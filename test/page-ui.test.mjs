@@ -125,7 +125,7 @@ test("no identity string is hardcoded: every one comes from CFG", () => {
      of them points a differently-namespaced install at the wrong documents. */
   const banned = [
     [/"[a-z0-9][a-z0-9-]*-(data|completions|commands|mirror)"/, "a Drive document title"],
-    [/"[A-Za-z0-9]+\.(marks|blocks|completions)\.v[0-9]"/, "a localStorage key"],
+    [/"[A-Za-z0-9]+\.(marks|blocks|completions|adds)\.v[0-9]"/, "a localStorage key"],
     [/\b(?:Africa|America|Antarctica|Asia|Atlantic|Australia|Europe|Indian|Pacific)\/[A-Za-z_]+/,
       "an IANA timezone"],
     [/console\.log\("\[/, "a bracketed console prefix"]
@@ -135,7 +135,8 @@ test("no identity string is hardcoded: every one comes from CFG", () => {
     assert.equal(m, null, `page still hardcodes ${what}: ${m && m[0]}`);
   }
   for (const src of ["CFG.docTitles.data", "CFG.docTitles.completions", "CFG.docTitles.commands",
-                     "CFG.storageKeys.marks", "CFG.storageKeys.blocks", "CFG.buckets.side",
+                     "CFG.storageKeys.marks", "CFG.storageKeys.blocks", "CFG.storageKeys.adds",
+                     "CFG.buckets.side",
                      "CFG.timezone", "CFG.leadTimeDays", "CFG.driveConnector"])
     assert.ok(html.includes(src), `page never reads ${src}`);
 });
@@ -810,4 +811,606 @@ test("an empty mail list and an empty board hide their panels rather than break"
   assert.equal(dom.window.MARK_LS, "agenda.marks.v1");
   assert.equal(dom.window.LOGP, "[term]");
   dom.window.close();
+});
+
+/* ===========================================================================
+ * 18. THE CHAT ADDS A TASK, and the AGQ1 command bus carries it
+ *
+ * The claim: a task asked for in the Ask panel is on the page BEFORE anything
+ * reaches Drive, is honest about not being real yet, and cannot be marked done
+ * until the pipeline has actually taken it. Everything below is asserted on the
+ * rendered grid chip - the one surface a near-future 23:59 task always has -
+ * because a store that answers correctly proves nothing about a renderer that
+ * throws the answer away.
+ *
+ * HARNESS NOTES.
+ *   * installClock() pins Date so `sentAt`, `todayKey` and the frame are the
+ *     same on every machine and in every month.
+ *   * bootAdd() registers a window "error" listener in beforeParse, BEFORE the
+ *     page's own script runs. Without it a boot-time throw is invisible and
+ *     every `assert.deepEqual(errors, [])` below is vacuous. Do not remove it.
+ *   * driveStub() is the whole connector: search_files answers for the data doc
+ *     and the completions doc, read_file_content hands back `drive.body`, and
+ *     create_file records what the page wrote. riggedDrive() wraps it to make a
+ *     write slow or make it fail with a chosen code.
+ * ======================================================================== */
+
+const NOW_MS = Date.parse("2026-09-02T18:00:00.000Z");   // 14:00 in America/New_York
+const ADD_TODAY = "2026-09-02";
+const ADD_T = "Ship the demo deck";
+const ADD_K = "0::task::ship the demo deck";
+const ADD_DUE = "2026-09-04";
+const ADD_MS = "2026-09-05T03:59:00.000Z";   // 23:59 New York, EDT (-04:00)
+const ADD_LS_KEY = "agenda.adds.v1";         // CFG.ns + ".adds.v1", never spelled in the page
+
+/* Three buckets so a refusal has something to name, one deadline so the week is
+   not empty, and two study blocks - the evening one exists so the tie guard has
+   something it could wrongly tie to. */
+const ADD_BASE = {
+  v: 4,
+  scrapedAt: "2026-09-02T12:00:00.000Z",
+  tz: "America/New_York",
+  weights: { "MATH 210": 4.2, "PHYS 221": 4, "Side Project": 3 },
+  schedule: [], board: [], done: [], announcements: [], mail: [], errors: [],
+  focus: [{
+    d: ADD_TODAY,
+    blocks: [
+      { c: "MATH 210", what: "Problem Set 4", why: "due Friday", t: "08:30", mins: 90 },
+      { c: "Side Project", what: "Land the webhook fix", why: "ship it", t: "20:00", mins: 60 },
+    ],
+  }],
+  items: [{
+    k: "110002::homework::problem set 4", c: "MATH 210", cid: 110002,
+    t: "Problem Set 4", d: "2026-09-04T23:59:00.000-04:00",
+    ty: "homework", s: null, src: ["dropbox"], u: null,
+  }],
+};
+
+const payload = (mut) => {
+  const p = JSON.parse(JSON.stringify(ADD_BASE));
+  return mut ? (mut(p) || p) : p;
+};
+const encode = (p) => packPlain("AGD", p);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Date, pinned. `new Date()` and `Date.now()` answer NOW_MS; everything else
+ *  (parse, UTC, an explicit argument) behaves exactly as it always did. */
+function installClock(win, startMs) {
+  const Real = win.Date;
+  class Fixed extends Real {
+    constructor(...a) { super(...(a.length ? a : [startMs])); }
+    static now() { return startMs; }
+  }
+  win.Date = Fixed;
+}
+
+/** The viewer's Google Drive connector, in about thirty lines. */
+function driveStub(drive) {
+  if (!drive.created) drive.created = [];
+  const mcp = {
+    listTools: async () => ({
+      servers: [{
+        server: "Google Drive",
+        tools: [{ name: "search_files" }, { name: "read_file_content" }, { name: "create_file" }],
+      }],
+    }),
+    invalidate: async () => {},
+    callTool: async (server, tool, input) => {
+      if (tool === "search_files") {
+        const q = String((input && input.query) || "");
+        return {
+          payload: {
+            files: q.includes(PAGE_CONFIG.docTitles.data)
+              ? [{ id: "data-1", modifiedTime: "2026-09-02T12:00:00.000Z" }]
+              : (drive.compFiles || []),
+          },
+        };
+      }
+      if (tool === "read_file_content") return { payload: { fileContent: drive.body } };
+      if (tool === "create_file") {
+        drive.created.push(input);
+        return { payload: { id: "created-" + drive.created.length } };
+      }
+      throw Object.assign(new Error("unexpected tool " + tool), { code: "tool_error" });
+    },
+  };
+  return { use: async (what) => (what === "mcp" ? mcp : null) };
+}
+
+/** driveStub, with create_file made slow (`rig.ms`) or made to fail with the
+ *  next code in `rig.codes`, so a second flush really can arrive mid-write. */
+function riggedDrive(drive, rig) {
+  const base = driveStub(drive);
+  return {
+    use: async (what) => {
+      const mcp = await base.use(what);
+      if (!mcp) return null;
+      return {
+        listTools: mcp.listTools,
+        invalidate: async () => {},
+        callTool: async (server, name, input) => {
+          if (name === "create_file") {
+            const code = rig.codes && rig.codes.length ? rig.codes.shift() : null;
+            if (code) throw Object.assign(new Error("rigged"), { code });
+            if (rig.ms) await new Promise((r) => setTimeout(r, rig.ms));
+          }
+          return mcp.callTool(server, name, input);
+        },
+      };
+    },
+  };
+}
+
+/** Boot the page on a pinned clock, collecting everything it threw. */
+async function bootAdd(t, pl = payload(), opts = {}) {
+  const JSDOM = await loadJsdom();
+  if (!JSDOM) return null;
+  const { VirtualConsole } = await import("jsdom");
+  const errors = [];
+  const dom = new JSDOM(build(pl, opts.cfg || PAGE_CONFIG), {
+    runScripts: "dangerously",
+    url: "https://example.invalid/agenda",
+    virtualConsole: new VirtualConsole().on("jsdomError", (e) => errors.push(String(e && e.message))),
+    beforeParse(win) {
+      installClock(win, opts.now === undefined ? NOW_MS : opts.now);
+      if (opts.claude) win.claude = opts.claude;
+      /* LOAD-BEARING: registered before the page's script runs, so a throw while
+         the page boots lands in `errors` instead of disappearing. Every
+         deepEqual(errors, []) below is vacuous without it. */
+      win.addEventListener("error", (e) => errors.push(String((e && e.message) || e)));
+      /* A runtime whose ICU cannot resolve the configured zone - a small-icu
+         build, a locked-down webview. The patch is live only while the page's
+         top-level script runs (that is when its formatters are built) and is put
+         back the moment the JSDOM constructor returns. */
+      if (opts.breakTz) {
+        const Real = win.Intl.DateTimeFormat;
+        win.__realDTF = Real;
+        const Fake = function (loc, o) {
+          if (o && o.timeZone === PAGE_CONFIG.timezone)
+            throw new RangeError("Invalid time zone specified: " + o.timeZone);
+          return new Real(loc, o);
+        };
+        Fake.supportedLocalesOf = function () { return Real.supportedLocalesOf.apply(Real, arguments); };
+        win.Intl.DateTimeFormat = Fake;
+      }
+    },
+  });
+  const win = dom.window;
+  if (opts.breakTz && win.__realDTF) win.Intl.DateTimeFormat = win.__realDTF;
+  win.console.error = (...a) => errors.push(a.map(String).join(" "));
+  t.after(() => win.close());
+  await settle();
+  return { win, doc: win.document, errors };
+}
+
+const tool = (win, name) => win.chatTools().find((x) => x.name === name);
+const addChip = (doc, k) => q(doc, '.mkchip[data-k="' + k + '"]');
+const badgeTxt = (doc, k) => {
+  const chip = addChip(doc, k);
+  const b = chip && chip.querySelector(".addbadge .addlab");
+  return b ? b.textContent.trim() : null;
+};
+/* the same task as the pipeline would ship it back, once command-ingest has run */
+const realAdd = (over) => Object.assign({
+  k: ADD_K, cid: 0, c: "Side Project", t: ADD_T, ty: "task",
+  d: ADD_MS, s: null, src: ["phone"],
+}, over || {});
+const addOne = (win, over) =>
+  tool(win, "add_item").execute(Object.assign(
+    { course: "Side Project", title: ADD_T, due: ADD_DUE }, over || {}));
+const bodiesOf = (drive) => drive.created.map((c) =>
+  JSON.parse(Buffer.from(c.textContent.slice(5, -4), "base64").toString("utf-8")));
+
+test("v5.2 T1: an added task is on the grid at once, badged, with nothing to tick", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  const before = qa(doc, ".mkchip").length;
+
+  const said = addOne(win, { desc: "PR 305 first" });
+  assert.match(said, /Side Project/);
+  assert.match(said, /Ship the demo deck/);
+  assert.match(said, /next sync/, "the confirmation says when it becomes real");
+
+  assert.equal(win.adds.ovl[ADD_K].sync, "pending");
+  const chip = addChip(doc, ADD_K);
+  assert.ok(chip, "the task is on the grid, not just in a store");
+  assert.equal(qa(doc, ".mkchip").length, before + 1);
+  assert.equal(txt(chip.querySelector(".mkn")), ADD_T);
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync");
+  assert.equal(chip.querySelector(".mkbox"), null, "a queued add has no ring to tick");
+  assert.equal(q(doc, '[data-done="' + ADD_K + '"]'), null, "and no done control anywhere");
+  assert.equal(q(doc, '[data-undo="' + ADD_K + '"]'), null);
+  assert.equal(q(doc, '[data-cancel="' + ADD_K + '"]'), null);
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T1b: it survives a re-render, and it keeps its own storage key", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc } = b;
+  addOne(win);
+  win.render();
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync",
+    "render() rebuilt it from the data, not the DOM");
+  /* the key is namespaced by the build, never spelled in the template */
+  assert.equal(win.ADD_LS, ADD_LS_KEY);
+  const stored = JSON.parse(win.localStorage.getItem(ADD_LS_KEY));
+  assert.equal(stored.v, 1);
+  assert.equal(stored.items[ADD_K].ty, "task");
+  assert.equal(stored.items[ADD_K].c, "Side Project");
+  assert.equal(win.localStorage.getItem(win.BLK_LS), null,
+    "the adds have their OWN key - never the blocks one");
+  assert.equal(win.localStorage.getItem(win.MARK_LS), null, "and never the marks one");
+});
+
+test("v5.2 T2: a duplicate is refused, whether the twin is real or queued", async (t) => {
+  const a = await bootAdd(t, payload((p) => { p.items = p.items.concat([realAdd()]); }));
+  if (!a) return t.skip("jsdom is not installed (it is not a dependency)");
+  const beforeA = qa(a.doc, ".mkchip").length;
+  assert.throws(() => addOne(a.win), /already on the agenda/);
+  assert.equal(qa(a.doc, ".mkchip").length, beforeA, "a refused add draws nothing");
+  assert.equal(a.doc.querySelector(".addbadge"), null);
+
+  const b = await bootAdd(t);
+  addOne(b.win);
+  const beforeB = qa(b.doc, ".mkchip").length;
+  assert.throws(() => addOne(b.win), /already queued/);
+  assert.equal(qa(b.doc, ".mkchip").length, beforeB);
+  assert.equal(qa(b.doc, ".addbadge").length, 1, "still exactly one badge");
+  assert.deepEqual(a.errors, []);
+  assert.deepEqual(b.errors, []);
+});
+
+test("v5.2 T3: an unknown bucket, a bad date and an empty title are all refused", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  const before = qa(doc, ".mkchip").length;
+  const add = (o) => () => tool(win, "add_item").execute(
+    Object.assign({ course: "Side Project", title: ADD_T, due: ADD_DUE }, o));
+
+  assert.throws(add({ course: "AAE 999" }), (e) => {
+    assert.match(e.message, /MATH 210/);
+    assert.match(e.message, /PHYS 221/);
+    assert.match(e.message, /Side Project/);
+    return true;
+  }, "the refusal names the buckets that may be used");
+  assert.throws(add({ due: "next Tuesday" }), /YYYY-MM-DD/);
+  assert.throws(add({ due: "2026-09-31" }), /YYYY-MM-DD/, "a day that does not exist is not a day");
+  assert.throws(add({ due: "2026-08-01" }), /between/, "further back than a week");
+  assert.throws(add({ due: "2028-01-01" }), /between/, "further ahead than a year");
+  assert.throws(add({ due: ADD_DUE, time: "25:00" }), /HH:MM/);
+  assert.throws(add({ title: "   " }), /1 to 120 characters/);
+  assert.throws(add({ title: "!!!" }), /stable key/);
+  assert.throws(add({ title: "due" }), /stable key/, "every word of it is a word normTitle strips");
+
+  assert.equal(qa(doc, ".mkchip").length, before, "nine refusals, nothing drawn");
+  assert.equal(win.adds.ovl[ADD_K], undefined);
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T4: 23:59 is the default, and it is 23:59 in the CONFIGURED zone", async (t) => {
+  /* America/New_York is the fixture's zone and it observes daylight saving, so
+     the same wall clock is two different instants six weeks apart. The offset
+     has to be asked of Intl at each instant; a hard-coded one puts half a term's
+     deadlines an hour out. */
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win } = b;
+  addOne(win);
+  assert.equal(win.adds.ovl[ADD_K].d, "2026-09-05T03:59:00.000Z", "September is UTC-4");
+
+  tool(win, "add_item").execute({ course: "Side Project", title: "Winter retro", due: "2026-12-10" });
+  assert.equal(win.adds.ovl["0::task::winter retro"].d, "2026-12-11T04:59:00.000Z",
+    "December is UTC-5, and nothing in the page knows that but Intl");
+
+  tool(win, "add_item").execute({ course: "Side Project", title: "Morning standup", due: ADD_DUE, time: "09:30" });
+  assert.equal(win.adds.ovl["0::task::morning standup"].d, "2026-09-04T13:30:00.000Z");
+
+  /* and a build in UTC stores the wall clock unchanged - the zone comes from
+     CFG.timezone, never from the browser and never from a constant */
+  const u = await bootAdd(t, payload(), { cfg: Object.assign({}, PAGE_CONFIG, { timezone: "UTC" }) });
+  addOne(u.win);
+  assert.equal(u.win.adds.ovl[ADD_K].d, "2026-09-04T23:59:00.000Z");
+  assert.deepEqual(b.errors, []);
+});
+
+test("v5.2 T5: the flush writes ONE add doc, and a block edit gets its own", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  const b = await bootAdd(t, payload(), { claude: driveStub(drive) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  await wait(40);
+
+  addOne(win, { desc: "PR 305 first" });
+  assert.equal(win.commitBlockEdit("fb::" + ADD_TODAY + "::1", ADD_TODAY, 16 * 60, 90), true,
+    "and a drag in the same window");
+
+  await win.flushAddSave(true);
+  await win.flushBlockSave(true);
+
+  assert.equal(drive.created.length, 2, "two buses, two documents");
+  for (const c of drive.created) {
+    assert.equal(c.title, PAGE_CONFIG.docTitles.commands);
+    assert.equal(c.contentMimeType, "text/plain");
+    assert.match(c.textContent, /^AGQ1\.[A-Za-z0-9+/=]+\.END$/,
+      "the public command envelope, never a private one");
+  }
+  const bodies = bodiesOf(drive);
+  assert.deepEqual(bodies.map((x) => x.commands.map((c) => c.op).join(",")), ["add", "block"],
+    "an add is never mixed into a block doc, or the reverse");
+  const env = bodies[0];
+  assert.equal(env.v, 1);
+  assert.match(env.issuedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(env.commands, [
+    { op: "add", c: "Side Project", t: ADD_T, d: ADD_MS, ty: "task", desc: "PR 305 first" },
+  ]);
+
+  assert.equal(win.adds.ovl[ADD_K].sync, "sent");
+  assert.equal(win.adds.ovl[ADD_K].sentAt, env.issuedAt);
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync",
+    "sent is not confirmed - only a payload confirms");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T6: a payload carrying the key retires the entry and hands back the tick", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  const b = await bootAdd(t, payload(), { claude: driveStub(drive) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  await wait(40);
+  addOne(win);
+  await win.flushAddSave(true);
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync");
+
+  drive.body = encode(payload((p) => {
+    p.scrapedAt = "2026-09-02T19:00:00.000Z";
+    p.items = p.items.concat([realAdd()]);
+  }));
+  doc.getElementById("refresh").click();
+  await wait(300);
+
+  assert.equal(win.adds.ovl[ADD_K], undefined,
+    "the real item wins, and the entry has nothing left to say");
+  assert.equal(badgeTxt(doc, ADD_K), null, "the badge goes with it");
+  const chip = addChip(doc, ADD_K);
+  assert.ok(chip, "and the item itself is still there");
+  assert.ok(chip.querySelector(".mkbox"), "now with a ring that can be ticked");
+  assert.equal(txt(chip.querySelector(".mkn")), ADD_T);
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T7: a newer payload WITHOUT the key says so, and Dismiss ends it", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  const b = await bootAdd(t, payload(), { claude: driveStub(drive) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  await wait(40);
+  addOne(win);
+  await win.flushAddSave(true);
+  assert.equal(win.adds.ovl[ADD_K].sentAt, "2026-09-02T18:00:00.000Z");
+
+  // newer than the embedded copy, OLDER than the write: it proves nothing
+  drive.body = encode(payload((p) => { p.scrapedAt = "2026-09-02T12:30:00.000Z"; }));
+  doc.getElementById("refresh").click();
+  await wait(300);
+  assert.equal(win.adds.ovl[ADD_K].sync, "sent");
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync", "a payload older than the write says nothing");
+
+  // newer than the write, but inside the ten-minute grace: `sentAt` is this
+  // browser's clock and the stamp is the pipeline machine's, and a run that
+  // started before the doc was written can still generate after it.
+  assert.equal(win.REFUSE_GRACE_MS, 600000);
+  drive.body = encode(payload((p) => { p.scrapedAt = "2026-09-02T18:05:00.000Z"; }));
+  doc.getElementById("refresh").click();
+  await wait(300);
+  assert.equal(win.adds.ovl[ADD_K].sync, "sent");
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync", "inside the grace, nothing is concluded");
+
+  // past the grace, and it still does not carry the key
+  drive.body = encode(payload((p) => { p.scrapedAt = "2026-09-02T18:20:00.000Z"; }));
+  doc.getElementById("refresh").click();
+  await wait(300);
+  assert.equal(win.adds.ovl[ADD_K].sync, "refused");
+  assert.equal(badgeTxt(doc, ADD_K), "not accepted by sync");
+
+  const dismiss = addChip(doc, ADD_K).querySelector("[data-adddismiss]");
+  assert.ok(dismiss, "a refused add offers a way out");
+  dismiss.click();
+  await wait(60);
+  assert.equal(win.adds.ovl[ADD_K], undefined);
+  assert.equal(addChip(doc, ADD_K), null, "and it leaves the grid with it");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T8: the three mark tools refuse a key that has not synced yet", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  addOne(win);
+  const id = win.chatRef(ADD_K);
+  for (const name of ["mark_done", "mark_wont_do", "clear_mark"]) {
+    assert.throws(() => tool(win, name).execute({ id }), /not synced yet/, name + " must refuse");
+  }
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync", "and nothing about it changed");
+  assert.equal(win.localStorage.getItem(win.MARK_LS), null, "no mark was written for it");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2 T10: the briefing lists the buckets, and flags what is only queued", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win } = b;
+  addOne(win);
+  const ctx = win.chatContext();
+  assert.match(ctx, /Buckets you may add tasks to: MATH 210, PHYS 221, Side Project/);
+  const line = ctx.split("\n").find((l) => l.indexOf(ADD_T) >= 0);
+  assert.ok(line, "the queued task is in the briefing");
+  assert.match(line, /\(pending sync\)/);
+  assert.match(line, /\[i\d+\]/, "with an [id] handle like any other item");
+});
+
+test("v5.2 T11: the debounce carries the add on its own, and re-arms when it cannot", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  const rig = { ms: 0 };
+  const b = await bootAdd(t, payload(), { claude: riggedDrive(drive, rig) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  await wait(80);
+  assert.equal(win.ADD_SAVE_DELAY, 1500, "the shipped debounce, before this test shortens it");
+  win.ADD_SAVE_DELAY = 60;      // the page reads it at schedule time
+
+  // (1) NOTHING below calls a flush by hand. If the timer does not carry the add,
+  //     nothing is ever written - which is the whole seam this case exists for.
+  rig.ms = 400;
+  addOne(win);
+  await wait(150);
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync", "still on the wire at 150ms");
+  assert.equal(drive.created.length, 0, "the write has not resolved yet");
+
+  // (2) a second add lands mid-write, and its own timer fires into the closed
+  //     guard. Without the re-arm this entry stays `pending` for the rest of the
+  //     session: no timer left behind, and Retry is only ever drawn for `failed`.
+  const K2 = "0::task::book the room";
+  tool(win, "add_item").execute({ course: "Side Project", title: "Book the room", due: ADD_DUE });
+  await wait(150);
+  rig.ms = 0;
+  await wait(900);
+
+  assert.equal(drive.created.length, 2, "a follow-up document, not a lost add");
+  assert.deepEqual(bodiesOf(drive).map((x) => x.commands.map((c) => c.t)),
+    [[ADD_T], ["Book the room"]], "one add per document, in the order they were asked for");
+  assert.equal(badgeTxt(doc, ADD_K), "pending sync");
+  assert.equal(badgeTxt(doc, K2), "pending sync", "both are on the bus, neither is stranded");
+  assert.equal(q(doc, ".addbadge.s-failed"), null, "and nothing failed");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2: a failed write is a control, never an automatic retry", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  const rig = { codes: ["tool_error"] };
+  const b = await bootAdd(t, payload(), { claude: riggedDrive(drive, rig) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc } = b;
+  await wait(40);
+  addOne(win);
+  await win.flushAddSave(true);
+  await wait(40);
+
+  assert.equal(win.adds.ovl[ADD_K].sync, "failed");
+  assert.equal(badgeTxt(doc, ADD_K), "sync failed");
+  assert.ok(addChip(doc, ADD_K).querySelector("[data-addretry]"),
+    "the only way it goes up again is a press");
+  assert.equal(drive.created.length, 0, "and nothing was created");
+});
+
+test("v5.2 F5: losing the connector does not hide a failed entry's Retry", async (t) => {
+  const drive = { body: encode(payload()), compFiles: [] };
+  // first write is refused outright; the second finds the capability withdrawn
+  const rig = { codes: ["tool_error", "capability_removed"] };
+  const b = await bootAdd(t, payload(), { claude: riggedDrive(drive, rig) });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc } = b;
+  await wait(40);
+
+  addOne(win);
+  await win.flushAddSave(true);
+  await wait(40);
+  assert.equal(badgeTxt(doc, ADD_K), "sync failed");
+  assert.ok(q(doc, ".blknote [data-addretry]"), "the queue-wide Retry is on the week bar");
+
+  // now the connector is gone, and a second add is merely waiting on it
+  const K2 = "0::task::book the room";
+  tool(win, "add_item").execute({ course: "Side Project", title: "Book the room", due: ADD_DUE });
+  await win.flushAddSave(true);
+  await wait(40);
+
+  const notes = qa(doc, ".blknote").map(txt).join(" | ");
+  assert.match(notes, /saved in this browser only/, "the connector line is told");
+  assert.match(notes, /Retry sync/, "and the failed entry keeps its way out");
+  assert.ok(q(doc, ".blknote [data-addretry]"),
+    "every automatic flush skips `failed`, so the press is the only exit and must stay on screen");
+  assert.equal(badgeTxt(doc, ADD_K), "sync failed");
+  assert.equal(badgeTxt(doc, K2), "pending sync", "an OFF write is not a refusal");
+});
+
+test("v5.2 F4: a runtime that cannot resolve the zone refuses rather than guessing", async (t) => {
+  const b = await bootAdd(t, payload(), { breakTz: true });
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc } = b;
+  assert.throws(() => addOne(win), /cannot resolve the America\/New_York time zone/);
+  assert.deepEqual(Object.keys(win.adds.ovl), [], "nothing was queued");
+  assert.equal(q(doc, ".addbadge"), null, "and nothing was drawn");
+  assert.equal(win.localStorage.getItem(ADD_LS_KEY), null);
+});
+
+test("v5.2: the open card says the same thing, and offers no Done or Won't do", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  addOne(win, { desc: "the investor deck, not the demo" });
+
+  addChip(doc, ADD_K).querySelector(".mkopen").click();
+  await wait(60);
+  const card = q(doc, '#dgrid .cell[data-k="' + ADD_K + '"]');
+  assert.ok(card, "it opens like any other item");
+  assert.equal(txt(card.querySelector(".addbadge .addlab")), "pending sync");
+  assert.equal(card.querySelector(".mdone"), null, "no Mark done");
+  assert.equal(card.querySelector(".mcancel"), null, "no Won't do");
+  assert.equal(card.querySelector(".cdone"), null, "and no ring on the head");
+  assert.match(txt(card.querySelector(".cdesc")), /investor deck/);
+  assert.match(txt(card), /Added by you/, "the source is honest about where it came from");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2: a queued add is never the goal a study block serves", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  const blocksBefore = qa(doc, ".tblock").length;
+
+  // the exact words of today's 20:00 Side Project block, which is what
+  // tieItemFor matches on - without the guard this add becomes its deadline
+  tool(win, "add_item").execute({
+    course: "Side Project", title: "Land the webhook fix", due: ADD_TODAY,
+  });
+  const k = "0::task::land the webhook fix";
+  assert.ok(addChip(doc, k), "it is on the grid");
+  assert.equal(q(doc, '[data-tie="' + k + '"]'), null,
+    "no block hangs its deadline control off a key nothing downstream can resolve");
+  assert.equal(q(doc, '[data-done="' + k + '"]'), null,
+    "and nowhere on the page is there a control that would mark it");
+  assert.equal(qa(doc, ".tblock").length, blocksBefore, "the plan itself did not move");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2: an overlay reloaded from storage is re-validated, and pushed once", async (t) => {
+  /* localStorage is a boundary like any other. An entry whose key does not match
+     its own title could never reconcile away, so it is dropped on load rather
+     than drawn forever; a well-formed one is pushed on the next load, which is
+     what makes "the connector was away" recoverable. */
+  const drive = { body: encode(payload()), compFiles: [] };
+  const first = await bootAdd(t, payload(), {});
+  if (!first) return t.skip("jsdom is not installed (it is not a dependency)");
+  addOne(first.win);   // no connector: it stays pending, in storage
+  const stored = JSON.parse(first.win.localStorage.getItem(ADD_LS_KEY));
+  assert.equal(stored.items[ADD_K].sync, "pending");
+  stored.items["0::task::a key that lies"] = Object.assign({}, stored.items[ADD_K]);
+
+  const b = await bootAdd(t, payload(), {
+    claude: driveStub(drive),
+    seed: null,
+  });
+  b.win.localStorage.setItem(ADD_LS_KEY, JSON.stringify(stored));
+  b.win.adds.ovl = {};
+  b.win.addLoad();
+  assert.deepEqual(Object.keys(b.win.adds.ovl), [ADD_K],
+    "the entry whose key contradicts its own title is dropped");
+  b.win.adds.pushedOnLoad = false;
+  await b.win.pushAddsOnLoad();
+  assert.equal(drive.created.length, 1, "what the connector missed goes up on the next load");
+  assert.equal(bodiesOf(drive)[0].commands[0].t, ADD_T);
+  await b.win.pushAddsOnLoad();
+  assert.equal(drive.created.length, 1, "and exactly once");
 });

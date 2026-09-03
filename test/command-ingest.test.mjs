@@ -916,3 +916,56 @@ test("focusBuckets falls back to the default label when no config loaded", () =>
   assert.deepEqual(focusBuckets({}), new Set([DEFAULT_SIDE_BUCKET]));
   assert.equal(DEFAULT_SIDE_BUCKET, "Side Project");
 });
+
+// ------------------------------------------------- the page's own add (v5.2)
+
+// The EXACT object web/page-template.html's addCommandOf() puts into an AGQ1
+// document - op/c/t/d/ty/desc and nothing else, with `d` already an instant
+// converted from 23:59 local in the build's configured timezone. It is pinned
+// here as a fixture rather than built, because the point of the case is that the
+// page and the bus agree on a shape neither of them can see the other computing:
+// the page ports normTitle from merge.mjs, so the key it reserved for its
+// pending-sync overlay has to be the key this validator derives - otherwise the
+// add lands as a second item and the page's entry never reconciles away.
+const PAGE_ADD = {
+  op: "add",
+  c: "Side Project",
+  t: "Ship the demo deck",
+  d: "2026-09-05T03:59:00.000Z",
+  ty: "task",
+  desc: "PR 305 first",
+};
+
+test("v5.2 T9: the add the PAGE emits is accepted, and refused once its key exists", () => {
+  withSandbox((dir, state) => {
+    const k = "0::task::ship the demo deck";
+    assert.equal(state.itemsByKey.has(k), false, "nothing in the agenda answers to it yet");
+
+    const r = validateAdd(PAGE_ADD, state);
+    assert.ok(r.ok, r.reason);
+    assert.equal(r.args.k, k, "the page's normTitle and merge.mjs's are one function");
+    assert.equal(r.args.c, "Side Project");
+    assert.equal(r.args.t, "Ship the demo deck");
+    assert.equal(r.args.ty, "task");
+    assert.equal(r.args.d, "2026-09-05T03:59:00.000Z", "the instant survives the round trip");
+    assert.equal(r.args.desc, "PR 305 first");
+
+    const item = phoneItem(r.args, NOW);
+    assert.equal(item.k, k);
+    assert.equal(item.cid, 0);
+    assert.equal(item.ty, "task");
+    assert.deepEqual(item.src, ["phone"]);
+
+    // a whole document of it applies, which is what the page actually writes
+    assert.equal(validateDoc(doc([PAGE_ADD]), state, NOW).status, "ok");
+
+    // and once the item is real the same command is a twin: the page stops
+    // sending it (its overlay entry is retired by the payload), and if a stale
+    // document turns up anyway the bus refuses the whole of it.
+    state.itemsByKey.set(k, { key: k, title: PAGE_ADD.t });
+    assert.match(validateAdd(PAGE_ADD, state).reason, /already exists/);
+    const v = validateDoc(doc([PAGE_ADD]), state, NOW);
+    assert.equal(v.status, "refused");
+    assert.deepEqual(v.plan, []);
+  });
+});
