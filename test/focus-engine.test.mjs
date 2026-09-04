@@ -7,6 +7,9 @@ import {
   collectSittings,
   sittingAttendance,
   classMeetings,
+  meetingBusySpans,
+  MEETING_MAX_DAYS,
+  MINUTES_PER_DAY,
   wakeFloor,
   allocateMinutes,
   enforceBlockMinutes,
@@ -2061,4 +2064,87 @@ test("tuning moves the block band, the grid and the day bounds", () => {
     assert.ok(s >= 12 * 60, `${b.c} starts at ${b.t}, not before the configured day start`);
     assert.ok(e <= 18 * 60, `${b.c} ends at ${clockOf(e)}, not after the configured day end`);
   }
+});
+
+
+// ---------------------------------------------------------------------------
+// meetingBusySpans - the user's own calendar as fixed commitments
+// ---------------------------------------------------------------------------
+
+const TZ_NY = "America/New_York";
+const timed = (s2, e, o = {}) => ({ k: "cal|x|" + s2, s: s2, e, ad: false, free: false, ...o });
+
+test("a timed meeting becomes one busy span, in local minutes", () => {
+  const spans = meetingBusySpans([timed("2026-09-04T19:00:00Z", "2026-09-04T20:30:00Z")], TZ_NY);
+  assert.deepEqual(spans, [{ day: "2026-09-04", start: 15 * 60, end: 16 * 60 + 30 }]);
+});
+
+test("an all-day meeting is NOT busy: a conference day is a label, not four blank hours", () => {
+  assert.deepEqual(meetingBusySpans([{ k: "a", s: "2026-09-08", e: "2026-09-09", ad: true }], TZ_NY), []);
+});
+
+test("a `free` meeting is NOT busy: the user marked themselves available", () => {
+  assert.deepEqual(meetingBusySpans([timed("2026-09-04T19:00:00Z", "2026-09-04T20:00:00Z", { free: true })], TZ_NY), []);
+});
+
+test("a meeting crossing local midnight is busy on BOTH days, clipped at the wall", () => {
+  // 22:00 to 01:30 local
+  const spans = meetingBusySpans([timed("2026-09-05T02:00:00Z", "2026-09-05T05:30:00Z")], TZ_NY);
+  assert.deepEqual(spans, [
+    { day: "2026-09-04", start: 22 * 60, end: MINUTES_PER_DAY },
+    { day: "2026-09-05", start: 0, end: 90 },
+  ]);
+});
+
+test("a malformed or backwards meeting is skipped rather than trusted", () => {
+  assert.deepEqual(meetingBusySpans([timed("nope", "also nope")], TZ_NY), []);
+  assert.deepEqual(meetingBusySpans([timed("2026-09-04T20:00:00Z", "2026-09-04T19:00:00Z")], TZ_NY), []);
+  assert.deepEqual(meetingBusySpans([null, "x", {}], TZ_NY), []);
+  assert.deepEqual(meetingBusySpans(null, TZ_NY), []);
+});
+
+test("an absurdly long meeting is clipped rather than looped over forever", () => {
+  const spans = meetingBusySpans([timed("2026-01-01T05:00:00Z", "2027-01-01T05:00:00Z")], TZ_NY);
+  // A year of busy time is a malformed event, not a commitment. It is clipped
+  // to MEETING_MAX_DAYS + the head day, and the last day contributes nothing
+  // when the end lands exactly on a midnight.
+  assert.ok(spans.length > 0 && spans.length <= MEETING_MAX_DAYS + 1, `got ${spans.length} spans`);
+  assert.equal(spans[0].day, "2026-01-01");
+});
+
+test("meetings and the timetable land in the SAME busy array, so one packer honours both", () => {
+  const base = {
+    items: [],
+    weights: { "MATH 210": 4 },
+    now: new Date("2026-09-04T13:00:00Z"), // 09:00 local, a Friday
+    days: 2,
+    studyMinutes: { weekday: 240, weekend: 240, weekdayWindow: ["10:00", "22:00"], weekendWindow: ["10:00", "22:00"] },
+    wakeTime: "08:00",
+    tz: TZ_NY,
+  };
+  const item = {
+    k: "1::homework::hw", c: "MATH 210", cid: 1, t: "HW", ty: "homework",
+    d: "2026-09-08T03:59:00.000Z", s: null, src: ["lms"],
+  };
+  const withItem = { ...base, items: [item] };
+  const plain = computeFocus(withItem);
+  const blocked = computeFocus({
+    ...withItem,
+    // the whole of today's study window, in local time
+    meetings: [timed("2026-09-04T14:00:00Z", "2026-09-05T02:00:00Z")],
+  });
+  const today = (plan) => plan.find((d) => d.d === "2026-09-04").blocks.filter((b) => b.t);
+  assert.ok(today(plain).length > 0, "the day had study in it to begin with");
+  assert.equal(today(blocked).length, 0, "and a meeting over the whole window leaves nowhere to put it");
+});
+
+test("an empty or absent meetings list reproduces the plan exactly", () => {
+  const args = {
+    items: [{ k: "1::homework::hw", c: "MATH 210", cid: 1, t: "HW", ty: "homework", d: "2026-09-08T03:59:00.000Z", s: null, src: ["lms"] }],
+    weights: { "MATH 210": 4 },
+    now: new Date("2026-09-04T13:00:00Z"),
+    days: 3,
+    tz: TZ_NY,
+  };
+  assert.deepEqual(computeFocus({ ...args, meetings: [] }), computeFocus(args));
 });

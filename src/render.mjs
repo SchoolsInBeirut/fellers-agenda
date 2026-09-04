@@ -48,13 +48,25 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { derive, loadConfigured, pageConfig, standardsCourse } from "./lib/config.mjs";
 import { budgetOf, pack, packWithinBudget } from "./lib/envelope.mjs";
+import { renderBrief } from "./brief.mjs";
 import { argFlag, argHas, argNow, dataDir as resolveDataDir, outPath, repoRoot } from "./lib/paths.mjs";
 import { itemKey } from "./merge.mjs";
 import { applyUserCompletions, completionLedger, resolveMarks } from "./completion.mjs";
 import { allocWeights } from "./study-model.mjs";
-import { computeFocus, extractReassessment, localDayKey, localTimeLabel, localWeekday } from "./focus-engine.mjs";
+import { addDays, computeFocus, extractReassessment, localDayKey, localTimeLabel, localWeekday } from "./focus-engine.mjs";
 
 const MAIL_CAP = 12;
+// How many meetings the PAGE may draw. It is a payload-size limit, not a
+// statement about the calendar: the planner is given every meeting in the
+// horizon, because capping what the planner sees would put study straight
+// through meeting 81, which is a real commitment whether or not there was room
+// to draw it.
+const MEETING_CAP = 80;
+// How old the inbound calendar file may get before the page is told. A lane
+// that has silently stopped looks exactly like a calendar with nothing on it.
+const MEETING_STALE_HOURS = 36;
+const HORIZON_DAYS = 7;
+
 const BOARD_CAP = 10; // the board is a nudge, not a backlog viewer
 const DONE_WINDOW_DAYS = 14;
 const PAYLOAD_VERSION = 4;
@@ -386,6 +398,87 @@ const schedule = Object.entries(cfg.schedule ?? {}).flatMap(([c, e]) =>
   })),
 );
 
+// ---------------------------------------------------------------------------
+// meetings[]: the user's own calendar, read INBOUND.
+//
+// `data/gcal-items.json` is written by `src/connectors/gcal-ingest.mjs`, which a
+// scheduled run executes before this script (runbooks/heavy-run.md). It is a
+// side file like every other one here: absent or unreadable means an empty list
+// and nothing else. A calendar the user has not connected, or a connector
+// outage, must never cost them their agenda.
+//
+// `calendars.gcal.enabled` is the one switch, and it is read HERE rather than
+// only by the runbook that decides whether to fetch. A file left behind by a
+// term when the route was on is not a reason to put meetings back on the page,
+// or to warn about a stale calendar nobody is using - so while the block is off
+// the file is not read at all and `meetings[]` is empty, exactly as
+// docs/CONFIG.md and docs/PROTOCOL.md section 4 promise.
+//
+// Direction is inbound only. Nothing in this file, or anything it calls, can
+// write to anybody's calendar - the ICS sink is the only thing here that writes
+// a calendar at all, and it writes a file.
+// ---------------------------------------------------------------------------
+const gcalEnabled = cfg.calendars?.gcal?.enabled === true;
+const gcalData = gcalEnabled ? readJson(join(DATA, "gcal-items.json"), null) : null;
+const gcalErrors = [];
+
+/**
+ * Every inbound event inside the horizon the page draws, minus `desc` - the
+ * page shows title, time and location, and the description is bulk the payload
+ * budget does not need. Sorted by start. UNCAPPED. PURE.
+ */
+function meetingsInHorizon(data, todayKey) {
+  const from = addDays(todayKey, -1);
+  const to = addDays(todayKey, HORIZON_DAYS);
+  const events = Array.isArray(data?.events) ? data.events : [];
+  // An all-day `e` is EXCLUSIVE, so a missing one is ONE DAY, never zero:
+  // defaulting it to `s` makes the span `s <= day < s`, which is empty, and the
+  // meeting disappears from a page that still has it on file.
+  const endOf = (m) => {
+    if (typeof m.e === "string" && m.e) return m.e;
+    return m.ad === true ? addDays(m.s, 1) : m.s;
+  };
+  const inHorizon = (m) => {
+    if (m.ad) return m.s <= to && m.e > from;
+    const day = localDayKey(m.s, TZ);
+    const endDay = localDayKey(m.e, TZ) ?? day;
+    return day !== null && day <= to && endDay >= from;
+  };
+  return events
+    .filter((m) => m && typeof m === "object" && typeof m.k === "string" && typeof m.s === "string")
+    .map((m) => ({
+      k: m.k,
+      feed: m.feed ?? "",
+      lbl: m.lbl ?? "",
+      t: m.t ?? "(untitled)",
+      s: m.s,
+      e: endOf(m),
+      ad: m.ad === true,
+      loc: m.loc ?? null,
+      free: m.free === true,
+      url: m.url ?? null,
+    }))
+    .filter(inHorizon)
+    .sort((a, b) => a.s.localeCompare(b.s) || a.k.localeCompare(b.k));
+}
+
+const allMeetings = meetingsInHorizon(gcalData, localDayKey(now, TZ));
+const meetings = allMeetings.slice(0, MEETING_CAP);
+// The meetings still ship - stale meetings beat none - but the page's error
+// strip says how old they are, so "an empty week" and "a lane that stopped" do
+// not look the same.
+if (gcalData && typeof gcalData.generatedAt === "string") {
+  const ageHours = Math.floor((now.getTime() - Date.parse(gcalData.generatedAt)) / 3600000);
+  if (Number.isFinite(ageHours) && ageHours >= MEETING_STALE_HOURS) {
+    gcalErrors.push(`calendar: meeting data is ${ageHours}h old`);
+  }
+}
+for (const feed of Array.isArray(gcalData?.feeds) ? gcalData.feeds : []) {
+  if (feed && typeof feed === "object" && feed.status && feed.status !== "ok") {
+    gcalErrors.push(`calendar: feed ${feed.id ?? "?"} is ${feed.status}`);
+  }
+}
+
 const board = (boardData.board ?? [])
   .filter((b) => b && typeof b === "object")
   .slice(0, BOARD_CAP)
@@ -486,6 +579,10 @@ const focus = computeFocus({
   studyMinutes: cfg.studyMinutes,
   wakeTime: cfg.wakeTime,
   schedule: cfg.schedule,
+  // A timed meeting the user is not marked free for is busy time exactly like
+  // an attended class: the planner must never put study over one. The UNcapped
+  // list - MEETING_CAP is a payload size limit, not a plan.
+  meetings: allMeetings,
   board: boardData.board ?? [],
   sideProject: cfg.sideProject,
   sideBucket: derived.sideBucket,
@@ -533,15 +630,26 @@ const compact = {
   mail,
   ...(standardsPlan ? { standardsPlan } : {}),
   focus,
+  // Additive: `v` stays 4. A page that has never heard of meetings[] ignores an
+  // unknown key and renders exactly as it did before.
+  meetings,
   // Errors about courses the user asked us to skip are noise, and noise is how
   // a real error gets ignored.
-  errors: (snap.errors ?? []).filter(
-    (e) => ![...derived.skipCodes].some((code) => code && String(e).includes(code)),
-  ),
+  errors: [
+    ...(snap.errors ?? []).filter(
+      (e) => ![...derived.skipCodes].some((code) => code && String(e).includes(code)),
+    ),
+    ...gcalErrors,
+  ],
 };
 
 const budget = budgetOf(cfg, "data");
 const packed = packWithinBudget("data", compact, { budget, now });
+// `cfg.title` names the agenda in the brief's header line. Nothing on the wire
+// ever carries this project's name - the same rule every other identity string
+// in this repo follows.
+const brief = renderBrief(packed.payload, now, TZ, { title: cfg.title });
+const briefLines = brief.split("\n").length;
 if (packed.over) {
   writeFileSync(join(DATA, "payload.oversize.txt"), packed.text);
   console.warn(
@@ -551,7 +659,18 @@ if (packed.over) {
       "The copy embedded in the page is always complete.",
   );
 } else {
-  writeFileSync(join(DATA, "payload.b64.txt"), packed.text);
+  // The document has two readers with nothing in common. The PAGE reads the
+  // envelope. The PHONE - a claude.ai Project with a Drive connector and no code
+  // of its own - reads the plain-text brief underneath it, because asking a chat
+  // turn to base64-decode, checksum and gunzip several thousand characters is
+  // slow, lossy and pointless when all it needs is four short lists.
+  //
+  // The brief is built from `packed.payload` - the object that was actually
+  // packed, slim tier and all - so the two halves of the document can never
+  // disagree about what was published. Everything after the first `.END` is
+  // invisible to every machine reader (`sliceEnvelope`), so nothing in it can
+  // ever be parsed as data.
+  writeFileSync(join(DATA, "payload.b64.txt"), `${packed.text}\n\n${brief}\n`);
 }
 // The page's first paint is synchronous, so the embedded copy is the plain
 // form - no decompression, no await, no blank grid while a stream drains. It is
@@ -584,7 +703,8 @@ const keptToday = today.blocks.filter((b) => b.kept).length;
 console.log(
   `payload v${PAYLOAD_VERSION}: ${items.length} items (${described} described, ${missing} key(s) without a description), ` +
     `${compact.announcements.length} announcements, ${mail.length} mail, ` +
-    `${schedule.length} class meetings, ${board.length} board entries, ${done.length} done, ` +
+    `${schedule.length} class meetings, ${meetings.length} calendar meetings, ` +
+    `${board.length} board entries, ${done.length} done, ` +
     `weights ${Object.keys(allocs).length ? "from study-model" : "from config.difficulty (model missing)"}, ` +
     `${focus.reduce((n, d) => n + d.blocks.length, 0)} focus blocks over ${focus.length} days ` +
     `(${focus.reduce((n, d) => n + d.blocks.reduce((m, b) => m + (b.mins ?? 0), 0), 0)} planned minutes, ` +
@@ -593,7 +713,8 @@ console.log(
 );
 console.log(
   `upload: ${packed.text.length} chars (budget ${budget}, tier ${packed.tier}${packed.over ? ", OVER" : ""})` +
-    (packed.tier > 0 ? ` - dropped ${packed.label}` : ""),
+    (packed.tier > 0 ? ` - dropped ${packed.label}` : "") +
+    (packed.over ? "" : ` + brief ${brief.length} chars, ${briefLines} lines`),
 );
 // The line that makes a run reproducible from its own log: which clock the plan
 // was built against, how much of today it preserved, and - when it preserved

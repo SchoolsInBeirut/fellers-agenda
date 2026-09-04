@@ -599,3 +599,32 @@ test("a payload tombstone RE-OPENS work rather than silencing it", () => {
   assert.equal(v.level, LEVEL.behind, "unchecked work due in 3h is behind again");
 });
 
+
+// ---------------------------------------------------------------------------
+// The brief that rides after the envelope
+// ---------------------------------------------------------------------------
+
+test("doneFromPayload reads a document that carries a brief after the envelope", () => {
+  // What render.mjs actually writes: the envelope, a blank line, the brief.
+  const doc =
+    pack("data", { v: 4, done: DONE }) +
+    "\n\n--- BRIEF (plain text for the phone; the blob above is the page's) ---\n" +
+    "DUE IN 48H\n  Fri Sep 4 11:59 PM  MATH 210 HW 1  #a::b::c\n" +
+    "--- END BRIEF ---\n";
+  assert.deepEqual(doneFromPayload(doc), DONE);
+});
+
+test("nothing in the brief is ever parsed, however envelope-shaped it looks", () => {
+  // The brief is prose assembled from strings other people wrote. An assignment
+  // title that reads like a wire message must stay a title.
+  const decoy = pack("data", { v: 4, done: [{ k: "decoy", at: "2026-08-30T00:00:00.000Z", via: "user" }] }, { compress: false });
+  const doc = pack("data", { v: 4, done: DONE }) + "\n\n" + decoy + "\n";
+  assert.deepEqual(doneFromPayload(doc), DONE);
+});
+
+test("a corrupt AGD2 with a perfectly good brief under it is still refused", () => {
+  const good = pack("data", { v: 4, done: DONE });
+  const flipped = good.replace(/^AGD2\.[0-9a-f]{8}\./, "AGD2.00000000.");
+  const doc = flipped + "\n\n--- BRIEF ---\nDUE IN 48H\n  (none)\n--- END BRIEF ---\n";
+  assert.deepEqual(doneFromPayload(doc), [], "a checksum failure has no fallback");
+});

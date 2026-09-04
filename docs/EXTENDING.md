@@ -303,6 +303,13 @@ reverted.
 
   `node scripts/validate-setup.mjs` fails on the same condition, so you find out
   before the scrape rather than after it.
+- **A calendar has two directions and they are different features.** A
+  `kind: "calendar-sink"` connector under `connectors.calendar.<provider>` writes
+  the agenda's deadlines OUT. Reading the user's own meetings IN is not a
+  registry connector at all: it is `calendars.gcal` in the config and
+  `src/connectors/gcal-ingest.mjs` on disk, because the bytes arrive through a
+  connector the user authorized in their own Claude account and the pipeline has
+  no credential to fetch them with. See "Agent-fed sources" below.
 - **`materials` is not a connector kind.** `connectors.materials` is a flat
   config block (`enabled`, `root`, `categories`, `maxFileMB`) driving the
   standalone `src/materials-sync.mjs`. There is no provider level, no registry
@@ -312,6 +319,54 @@ reverted.
 
 **A new connector ships with `"enabled": false`.** The user turns it on once it
 has been verified against their account, not before.
+
+---
+
+## 5b. Agent-fed sources - when the pipeline cannot hold the credential
+
+Most sources here are adapters: the pipeline calls something and gets data back.
+Some sources cannot work that way, and the inbound calendar is the worked
+example.
+
+A personal calendar needs OAuth against an account the user owns. Putting those
+credentials on the user's machine means a token store, a refresh flow and a
+consent screen a scheduled run cannot answer at 07:03. But the user has already
+authorized a calendar connector in their own Claude account - and the scheduled
+run **is** a Claude agent. So the agent borrows that authorization for the length
+of one step.
+
+The shape, and it generalises to any source in this position:
+
+1. **The runbook** tells the agent exactly which tool to call, with which
+   arguments, and to save the result **VERBATIM** to a file under `data/tmp/`.
+   No reformatting, no trimming, no summarising. The agent is a transport.
+2. **A deterministic script** reads that file and decides everything: what the
+   fields mean, which records are in the window, what an offset-less time is, and
+   what happens when the file is missing. `src/connectors/gcal-ingest.mjs` is
+   this half, and `gcal-normalize.mjs` is its pure core.
+3. **The exit code is the contract.** 0 ingested, 3 partial (the previous run's
+   data stands in for up to 48 hours, and the file is written either way so
+   nothing on disk is lying), 1 hard failure with the previous file untouched.
+4. **The runbook maps the code to one log token** and continues. A source like
+   this never fails a run.
+
+**The agent copies bytes; the script decides.** Everything that is a judgement
+lives in code a unit test can pin down, which is the same rule the rest of this
+repository runs on - it is just applied to a fetch instead of to a plan.
+
+Three rules that come with the shape:
+
+- **Direction is declared and enforced.** The runbook restricts the agent to the
+  connector's read tools, and the script cannot reach the network at all, so
+  "inbound only" is not a promise - it is a property of a script that has no
+  socket.
+- **The raw file is a secret.** It may hold attendee addresses, meeting bodies
+  and conference PINs. Nothing from it is printed: a warning names a record by
+  eight characters of its id, a parse failure is reported as a byte count and
+  never a snippet, and the temp file is deleted by the step that made it.
+- **Never call `authenticate`.** A connector the user has not authorized is a
+  `SKIPPED` token and a line in the digest. A scheduled run that opens a consent
+  screen leaves a browser waiting on somebody who is asleep.
 
 ---
 

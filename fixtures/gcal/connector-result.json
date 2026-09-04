@@ -1,0 +1,98 @@
+{
+  "accessRole": "owner",
+  "defaultReminders": [{ "method": "popup", "minutes": 10 }],
+  "summary": "work@example.com",
+  "timeZone": "America/New_York",
+  "updated": "2026-09-03T18:24:11.000Z",
+  "events": [
+    {
+      "id": "ev-timed-1",
+      "status": "confirmed",
+      "summary": "Sprint planning",
+      "location": "Room 4B",
+      "description": "Bring the burndown chart.",
+      "htmlLink": "https://calendar.example.com/event?eid=ev-timed-1",
+      "start": { "dateTime": "2026-09-04T15:00:00-04:00", "timeZone": "America/New_York" },
+      "end": { "dateTime": "2026-09-04T16:00:00-04:00", "timeZone": "America/New_York" },
+      "attendees": [
+        { "email": "colleague@example.com", "responseStatus": "accepted" },
+        { "email": "someone.else@example.com", "responseStatus": "needsAction" }
+      ],
+      "organizer": { "email": "organizer@example.com" },
+      "conferenceData": { "conferenceId": "abc-defg-hij" }
+    },
+    {
+      "id": "ev-offsetless",
+      "status": "confirmed",
+      "summary": "Dentist",
+      "start": { "dateTime": "2026-09-05T09:30:00", "timeZone": "America/New_York" },
+      "end": { "dateTime": "2026-09-05T10:15:00", "timeZone": "America/New_York" }
+    },
+    {
+      "id": "ev-allday",
+      "status": "confirmed",
+      "summary": "Team offsite",
+      "start": { "date": "2026-09-08" },
+      "end": { "date": "2026-09-10" }
+    },
+    {
+      "id": "ev-free",
+      "status": "confirmed",
+      "summary": "Gym (optional)",
+      "transparency": "transparent",
+      "start": { "dateTime": "2026-09-06T18:00:00-04:00" },
+      "end": { "dateTime": "2026-09-06T19:00:00-04:00" }
+    },
+    {
+      "id": "ev-cancelled",
+      "status": "cancelled",
+      "summary": "Cancelled sync",
+      "start": { "dateTime": "2026-09-07T10:00:00-04:00" },
+      "end": { "dateTime": "2026-09-07T10:30:00-04:00" }
+    },
+    {
+      "id": "_71j34oppcgom2d326pijephg64p36d1l5lmm2qbe81gmepbechgisob7cln68o9edhnm6obc_20260904T120000Z",
+      "status": "confirmed",
+      "summary": "PHYS 221: Problem Set 3 due",
+      "start": { "dateTime": "2026-09-04T23:29:00-04:00" },
+      "end": { "dateTime": "2026-09-04T23:59:00-04:00" }
+    },
+    {
+      "id": "ev-marker-only",
+      "status": "confirmed",
+      "summary": "MATH 210: Quiz 2 due",
+      "description": "Type: quiz | Source: lms\n\nAuto-created by the agenda. Edits here are replaced the next time the file is written.",
+      "start": { "dateTime": "2026-09-09T23:29:00-04:00" },
+      "end": { "dateTime": "2026-09-09T23:59:00-04:00" }
+    },
+    {
+      "id": "ev-instance-1",
+      "status": "confirmed",
+      "summary": "Standup",
+      "recurringEventId": "ev-series",
+      "originalStartTime": { "dateTime": "2026-09-07T09:15:00-04:00" },
+      "start": { "dateTime": "2026-09-07T09:15:00-04:00" },
+      "end": { "dateTime": "2026-09-07T09:30:00-04:00" }
+    },
+    {
+      "id": "ev-master",
+      "status": "confirmed",
+      "summary": "Weekly review",
+      "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=6"],
+      "start": { "dateTime": "2026-09-11T16:00:00-04:00" },
+      "end": { "dateTime": "2026-09-11T17:00:00-04:00" }
+    },
+    {
+      "id": "ev-out-of-window",
+      "status": "confirmed",
+      "summary": "Next quarter kickoff",
+      "start": { "dateTime": "2026-11-02T14:00:00-05:00" },
+      "end": { "dateTime": "2026-11-02T15:00:00-05:00" }
+    },
+    {
+      "id": "ev-no-start",
+      "status": "confirmed",
+      "summary": "Broken entry"
+    }
+  ]
+}

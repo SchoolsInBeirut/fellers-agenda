@@ -1,0 +1,30 @@
+{
+  "events": [
+    {
+      "id": "hand-1",
+      "title": "Advisor meeting",
+      "start": "2026-09-04T14:00:00-04:00",
+      "end": "2026-09-04T14:30:00-04:00",
+      "location": "Office 210",
+      "url": "https://calendar.example.com/event?eid=hand-1"
+    },
+    {
+      "id": "hand-2",
+      "title": "Reading day",
+      "start": "2026-09-12",
+      "allDay": true
+    },
+    {
+      "id": "hand-3",
+      "title": "Optional talk",
+      "start": "2026-09-05T17:00:00",
+      "end": "2026-09-05T18:00:00",
+      "free": true
+    },
+    {
+      "id": "hand-4",
+      "title": "No end given",
+      "start": "2026-09-06T11:00:00-04:00"
+    }
+  ]
+}

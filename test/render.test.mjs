@@ -28,8 +28,8 @@ import { spawnSync } from "node:child_process";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { itemKey } from "../src/merge.mjs";
-import { cutMinute, localDayKey, localMinuteOfDay, wakeFloor } from "../src/focus-engine.mjs";
-import { crc32, unpack } from "../src/lib/envelope.mjs";
+import { addDays, cutMinute, localDayKey, localMinuteOfDay, wakeFloor } from "../src/focus-engine.mjs";
+import { crc32, sliceEnvelope, unpack } from "../src/lib/envelope.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RENDER = path.join(ROOT, "src", "render.mjs");
@@ -58,6 +58,17 @@ const CONFIG = {
   studyMinutes: { weekday: 240, weekend: 300, weekdayWindow: ["16:00", "22:30"], weekendWindow: ["10:00", "21:00"] },
   schedule: {},
   drive: { maxEmitChars: BUDGET },
+  // The inbound calendar is opt-in, and `enabled` is the ONLY thing that turns
+  // it on: a leftover data/gcal-items.json from a term when it was on must not
+  // put meetings back on the page. So the sandbox says so out loud, and the
+  // test below runs the same file against a config that does not.
+  calendars: { gcal: { enabled: true } },
+};
+
+/** The same config with the inbound calendar switched off, however it is spelled. */
+const configWithoutCalendar = (gcal) => {
+  const { calendars, ...rest } = CONFIG;
+  return gcal === undefined ? rest : { ...rest, calendars: { gcal } };
 };
 
 const NOW = Date.now();
@@ -94,6 +105,7 @@ function sandbox({
   announcements = [],
   errors = [],
   config = CONFIG,
+  gcal = null,
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-render-"));
   fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(config));
@@ -107,6 +119,9 @@ function sandbox({
   // overwrites it, so a mid-day re-render keeps the morning it already told the
   // user about instead of re-deriving a day that is half over.
   if (focusPlan) write("focus-plan.json", focusPlan);
+  // What src/connectors/gcal-ingest.mjs left behind. Absent is the normal case:
+  // the inbound calendar route is opt-in and most installs never turn it on.
+  if (gcal) write("gcal-items.json", gcal);
   return dir;
 }
 
@@ -132,7 +147,10 @@ const runRender = (dir, args = []) =>
 function render(dir, args = []) {
   const run = runRender(dir, args);
   assert.equal(run.status, 0, `render.mjs failed:\n${run.stderr}${run.stdout}`);
-  const envelope = fs.readFileSync(path.join(dir, "data", "payload.b64.txt"), "utf8");
+  // The file is the whole DOCUMENT now: the envelope, a blank line and the
+  // brief. `sliceEnvelope` is where every machine reader stops.
+  const document = fs.readFileSync(path.join(dir, "data", "payload.b64.txt"), "utf8");
+  const envelope = sliceEnvelope(document);
   const out = unpack(envelope);
   return { payload: out.data, envelope, stdout: run.stdout, html: fs.readFileSync(path.join(dir, "agenda.html"), "utf8") };
 }
@@ -724,4 +742,256 @@ test("the published page template, when present, carries both markers", () => {
   const html = fs.readFileSync(real, "utf8");
   assert.ok(html.includes('"__PAYLOAD__"'), "the payload marker must be quoted in the template");
   assert.ok(html.includes("__PAGE_CONFIG__"), "the page-config marker must be bare");
+});
+
+
+// ---------------------------------------------------------------------------
+// meetings[] - the user's own calendar, read inbound
+// ---------------------------------------------------------------------------
+
+/** What src/connectors/gcal-ingest.mjs writes, for the days around `now`. */
+const gcalDoc = (events, generatedAt = SCRAPED_AT) => ({
+  v: 1,
+  generatedAt,
+  tz: TZ,
+  window: { from: localDayKey(NOW - DAY, TZ), to: localDayKey(NOW + 21 * DAY, TZ) },
+  feeds: [{ id: "work", label: "Work", status: "ok", source: "connector", fetchedAt: generatedAt, events: events.length, skippedOwn: 0, warnings: [], error: null }],
+  events,
+});
+
+const meetingAt = (msFromNow, minutes, o = {}) => ({
+  k: `work|ev-${msFromNow}|${iso(msFromNow)}`,
+  feed: "work",
+  lbl: "Work",
+  t: "Sprint planning",
+  s: iso(msFromNow),
+  e: iso(msFromNow + minutes * 60000),
+  ad: false,
+  loc: "Room 4B",
+  desc: "not carried into the payload",
+  free: false,
+  url: null,
+  ...o,
+});
+
+test("no gcal-items.json means an empty meetings[] and nothing else changes", () => {
+  withRender({ items: [snapItem()] }, (payload) => {
+    assert.deepEqual(payload.meetings, [], "the key is always present, so the page never branches on absence");
+  });
+});
+
+test("a leftover gcal-items.json is invisible while calendars.gcal.enabled is not true", () => {
+  // The switch has to be read by the CODE, not only by the runbook that decides
+  // whether to fetch. A user who turned the route off - or who never turned it
+  // on and still has the file from a term when they did - gets an empty
+  // meetings[], no meeting in the planner's busy time, and no error strip about
+  // a calendar they are not using.
+  const doc = gcalDoc([meetingAt(2 * HOUR, 60)], new Date(NOW - 40 * HOUR).toISOString());
+  doc.feeds[0].status = "failed";
+  for (const gcal of [undefined, { enabled: false }, {}]) {
+    withRender({ items: [snapItem()], gcal: doc, config: configWithoutCalendar(gcal) }, (payload) => {
+      assert.deepEqual(payload.meetings, [], `enabled: ${JSON.stringify(gcal)} must leave meetings[] empty`);
+      assert.deepEqual(
+        payload.errors.filter((e) => /^calendar:/.test(e)),
+        [],
+        "a dormant route reports neither staleness nor a failed feed",
+      );
+    });
+  }
+});
+
+test("meetings[] carries what the page draws, and drops the description the payload does not need", () => {
+  const m = meetingAt(2 * HOUR, 60);
+  withRender({ items: [snapItem()], gcal: gcalDoc([m]) }, (payload) => {
+    assert.equal(payload.meetings.length, 1);
+    assert.deepEqual(Object.keys(payload.meetings[0]).sort(), ["ad", "e", "feed", "free", "k", "lbl", "loc", "s", "t", "url"]);
+    assert.equal(payload.meetings[0].t, "Sprint planning");
+    assert.ok(!JSON.stringify(payload.meetings).includes("not carried into the payload"));
+  });
+});
+
+test("a meeting outside the week the page draws never reaches the payload", () => {
+  withRender(
+    { items: [snapItem()], gcal: gcalDoc([meetingAt(2 * HOUR, 60), meetingAt(40 * DAY, 60, { t: "Far future" })]) },
+    (payload) => {
+      assert.deepEqual(payload.meetings.map((x) => x.t), ["Sprint planning"]);
+    },
+  );
+});
+
+test("a timed meeting is busy time: the planner never puts a study block over one", () => {
+  // The study window in CONFIG is 16:00-22:30 on a weekday. Block out the whole
+  // of it tomorrow and nothing may be planned inside it.
+  const tomorrow = localDayKey(NOW + DAY, TZ);
+  const dayStartMs = Date.parse(`${tomorrow}T00:00:00Z`);
+  const at = (hhmm) => {
+    const [h, mi] = hhmm.split(":").map(Number);
+    return dayStartMs + (h * 60 + mi) * 60000;
+  };
+  // Built in UTC then converted: what matters is the local minute the engine sees.
+  const start = new Date(at("00:00") + 20 * HOUR).toISOString(); // 20:00Z = 16:00 local (EDT)
+  const end = new Date(at("00:00") + 22 * HOUR).toISOString();
+  const busy = { ...meetingAt(0, 0), k: "work|busy|1", t: "All-afternoon workshop", s: start, e: end };
+
+  withRender({ items: [snapItem({ due: iso(4 * DAY) })], gcal: gcalDoc([busy]) }, (payload) => {
+    const day = payload.focus.find((d) => d.d === localDayKey(Date.parse(start), TZ));
+    assert.ok(day, "the meeting's day is inside the horizon");
+    const sm = localMinuteOfDay(Date.parse(start), TZ);
+    const em = localMinuteOfDay(Date.parse(end), TZ);
+    // Without this the assertion below would pass vacuously on an empty day.
+    assert.ok(day.blocks.some((b) => b.t), "the day still has timed study in it");
+    for (const b of day.blocks) {
+      if (!b.t) continue;
+      const bs = Number(b.t.slice(0, 2)) * 60 + Number(b.t.slice(3, 5));
+      const be = bs + b.mins;
+      assert.ok(be <= sm || bs >= em, `block ${b.t}+${b.mins} overlaps the meeting ${sm}-${em}`);
+    }
+  });
+});
+
+test("an all-day meeting is drawn but is NOT busy - a reading day is still a day to study", () => {
+  const tomorrow = localDayKey(NOW + DAY, TZ);
+  const allDay = {
+    k: "work|ad|1", feed: "work", lbl: "Work", t: "Reading day",
+    s: tomorrow, e: localDayKey(NOW + 2 * DAY, TZ), ad: true, loc: null, desc: null, free: false, url: null,
+  };
+  withRender({ items: [snapItem({ due: iso(4 * DAY) })], gcal: gcalDoc([allDay]) }, (payload) => {
+    assert.equal(payload.meetings.length, 1);
+    const day = payload.focus.find((d) => d.d === tomorrow);
+    assert.ok(day.blocks.length > 0, "an all-day label must never delete a day of study");
+  });
+});
+
+test("an all-day meeting with no end is one day long, not zero - `e` is EXCLUSIVE", () => {
+  // `e` is the day AFTER the last one, so defaulting a missing end to `s` makes
+  // the window `s <= day < s` - empty - and the meeting vanishes from the page
+  // while still sitting in the file. One day is the only reading that draws it.
+  const tomorrow = localDayKey(NOW + DAY, TZ);
+  const noEnd = {
+    k: "work|ad-no-end|1", feed: "work", lbl: "Work", t: "Conference",
+    s: tomorrow, ad: true, loc: null, free: false, url: null,
+  };
+  withRender({ items: [snapItem()], gcal: gcalDoc([noEnd]) }, (payload) => {
+    assert.equal(payload.meetings.length, 1, "an end-less all-day event still reaches the page");
+    assert.equal(payload.meetings[0].e, addDays(tomorrow, 1), "one day, exclusive end");
+  });
+});
+
+test("a `free` meeting is drawn but is not busy either - the user said they are available", () => {
+  const tomorrow = localDayKey(NOW + DAY, TZ);
+  const dayStartMs = Date.parse(`${tomorrow}T00:00:00Z`);
+  const free = {
+    ...meetingAt(0, 0),
+    k: "work|free|1",
+    t: "Optional talk",
+    s: new Date(dayStartMs + 20 * HOUR).toISOString(),
+    e: new Date(dayStartMs + 22 * HOUR).toISOString(),
+    free: true,
+  };
+  withRender({ items: [snapItem({ due: iso(4 * DAY) })], gcal: gcalDoc([free]) }, (payload) => {
+    const day = payload.focus.find((d) => d.d === localDayKey(Date.parse(free.s), TZ));
+    assert.ok(day.blocks.some((b) => b.t), "a transparent event holds no hour");
+  });
+});
+
+test("an unreadable gcal-items.json costs the meetings and nothing else", () => {
+  const dir = sandbox({ items: [snapItem()] });
+  try {
+    fs.writeFileSync(path.join(dir, "data", "gcal-items.json"), "{ not json");
+    const r = render(dir);
+    assert.deepEqual(r.payload.meetings, []);
+    assert.ok(r.payload.items.length > 0, "the agenda still renders");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a stale calendar file still ships its meetings, and says how old they are", () => {
+  const old = new Date(NOW - 40 * HOUR).toISOString();
+  withRender({ items: [snapItem()], gcal: gcalDoc([meetingAt(2 * HOUR, 60)], old) }, (payload) => {
+    assert.equal(payload.meetings.length, 1, "stale meetings beat no meetings");
+    assert.ok(
+      payload.errors.some((e) => /calendar: meeting data is \d+h old/.test(e)),
+      `the page is told: ${JSON.stringify(payload.errors)}`,
+    );
+  });
+});
+
+test("a feed the ingest could not refresh is reported on the page's error strip", () => {
+  const doc = gcalDoc([]);
+  doc.feeds[0].status = "failed";
+  doc.feeds[0].error = "the --in file could not be read";
+  withRender({ items: [snapItem()], gcal: doc }, (payload) => {
+    assert.ok(payload.errors.some((e) => /calendar: feed work is failed/.test(e)));
+  });
+});
+
+test("the render summary counts calendar meetings apart from class meetings", () => {
+  withRender({ items: [snapItem()], gcal: gcalDoc([meetingAt(2 * HOUR, 60)]) }, (payload, dir, stdout) => {
+    assert.match(stdout, /1 calendar meetings/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The document has two halves: the envelope, and a brief for a phone
+// ---------------------------------------------------------------------------
+
+const docOf = (dir) => fs.readFileSync(path.join(dir, "data", "payload.b64.txt"), "utf8");
+
+test("the document is the envelope, one blank line, then the brief", () => {
+  withRender({ items: [snapItem()] }, (payload, dir, stdout, r) => {
+    const doc = docOf(dir);
+    assert.ok(doc.startsWith("AGD2."), "the envelope leads, because the page reads first");
+    const idx = doc.indexOf(".END");
+    assert.ok(idx > 0);
+    assert.equal(
+      doc.slice(idx + 4, idx + 6),
+      "\n\n",
+      "exactly one blank line, so a human eye and a phone both find the break",
+    );
+    assert.ok(doc.includes("--- BRIEF (plain text for the phone; the blob above is the page's) ---"));
+    assert.ok(doc.trimEnd().endsWith("--- END BRIEF ---"), "the phone must be able to tell it has all of it");
+  });
+});
+
+test("the brief is built from the payload that was actually published", () => {
+  // Not from the files behind it: the two halves of one document can never be
+  // allowed to describe two different weeks.
+  withRender({ items: [snapItem({ title: "Homework 2" })] }, (payload, dir) => {
+    const brief = docOf(dir).split("--- BRIEF")[1];
+    assert.ok(brief.includes("Homework 2"), brief);
+    assert.ok(brief.includes(payload.items[0].k), "an actionable row carries its item key");
+  });
+});
+
+test("the envelope still round-trips out of the document, brief and all", () => {
+  withRender({ items: [snapItem()] }, (payload, dir) => {
+    assert.deepEqual(unpack(sliceEnvelope(docOf(dir))).data, payload);
+  });
+});
+
+test("the brief is pure ASCII even when the payload is not", () => {
+  withRender({ items: [snapItem({ title: "Problem Set 4 — résumé of § 3" })] }, (payload, dir) => {
+    const brief = docOf(dir).split("--- BRIEF")[1];
+    for (const ch of brief) {
+      if (ch === "\n") continue;
+      const code = ch.codePointAt(0);
+      assert.ok(code >= 0x20 && code <= 0x7e, `non-ASCII ${JSON.stringify(ch)} reached the document`);
+    }
+  });
+});
+
+test("the brief header is named by config.title, never by a constant in the code", () => {
+  withRender(
+    { items: [snapItem()], config: { ...CONFIG, title: "Autumn Plan" } },
+    (payload, dir) => {
+      assert.match(docOf(dir), /\nAutumn Plan brief - /);
+    },
+  );
+});
+
+test("the run says how big both halves are, so a log line explains a big document", () => {
+  withRender({ items: [snapItem()] }, (payload, dir, stdout) => {
+    assert.match(stdout, /upload: \d+ chars \(budget \d+, tier 0\) \+ brief \d+ chars, \d+ lines/);
+  });
 });

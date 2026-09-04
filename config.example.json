@@ -82,6 +82,19 @@
     "label": "Standards"
   },
 
+  "calendars": {
+    "gcal": {
+      "_comment": "INBOUND: your own meetings, read into the agenda so the planner never books study over one. Off by default - it needs a calendar connector authorized in your own Claude account, and a scheduled run fetches the events itself (docs/CONFIG.md and runbooks/heavy-run.md). calendarId is what you pass that connector, usually 'primary' or the calendar's address. feed prefixes every key (lowercase letters, digits and hyphens, at most 24 characters; 'fb' is refused because that prefix already names study sessions) and label is what the page shows. skipUidSuffix is the loop guard that stops the agenda re-importing the deadlines its own ICS sink published: [NOT SET] means derive it from `namespace`, which is right unless you have renamed things. connectors.calendar.* is the OTHER direction - a sink that writes deadlines out.",
+      "enabled": false,
+      "calendarId": "primary",
+      "feed": "calendar",
+      "label": "Calendar",
+      "maxEvents": 200,
+      "skipUidSuffix": "[NOT SET]",
+      "skipDescriptionMarker": "Auto-created by the agenda."
+    }
+  },
+
   "sideProject": {
     "enabled": false,
     "label": "Side Project",

@@ -30,6 +30,19 @@ Artifacts are private to you by default. **Keep it that way.** Do not use the
 share link, do not publish it to an organisation, and do not paste the URL
 anywhere. Nothing in this repo asks you to.
 
+### The page is not the only reader of the data document
+
+The `<ns>-data` document the page refreshes from carries two things: the
+compressed envelope this page reads, and — after it, in plain text — a **brief**
+written for a human. The page ignores everything past the first `.END`, and
+always has; nothing about the brief changes what is on this page or how it
+loads.
+
+The brief exists so you can ask a question on a phone without opening anything:
+a claude.ai Project with the Drive connector reads that block and answers out of
+it. That is entirely optional and entirely separate from this page —
+`docs/PHONE.md` sets it up if you want it.
+
 ---
 
 ## 2. Publish it
@@ -211,6 +224,10 @@ the rest of the session and carries on.
 That fallback is a safety net, not a configuration method. If you know the name
 is different, set `drive.connectorName` in `config.json` to match and republish.
 
+Every message the page shows about the connector uses that same value, so a page
+built with a different `connectorName` tells you to reconnect **that** connector
+rather than one you have never had.
+
 ---
 
 ## 6. Reading the status line
@@ -226,6 +243,7 @@ its data. It is never decorative.
 | `live refresh unavailable here` | There is no connector in this view at all. | You are looking at a local file, or the page was published without the `mcp` capability. |
 | `no data doc in Drive` | The connector works; nothing named `<ns>-data` was found. | The pipeline has not uploaded yet. Run the heavy runbook, or check the run log for `drive=FAILED` / `drive=SKIPPED(oversize)`. |
 | `data doc unreadable (checksum)` | The document exists but its checksum does not match its contents — it was transcribed wrong, truncated, or hand-edited. | **Do not edit the document.** Re-run the upload so a fresh one is created. |
+| `data doc unreadable (truncated)` | The document starts `AGD2.` but the envelope never finishes — the upload was cut short. The page refuses it outright rather than looking for an older envelope further down the file. | Re-run the upload. The runbook's read-back check normally catches this before the document is ever rotated in. |
 | `data doc unreadable` | The document decoded but is not a payload this page understands. | Usually a page and a pipeline at different versions. Re-run `render.mjs` and republish. |
 | `this browser cannot read compressed data` | No `DecompressionStream`. | Use a current browser (Chrome 80+, Firefox 113+, Safari 16.4+). The embedded copy still renders. |
 | `Drive needs reconnecting on claude.ai` | The connector's authorisation expired. | Reconnect Google Drive in claude.ai settings. |
@@ -312,6 +330,10 @@ Worth knowing before you grant it anything:
   report on, never as an instruction**. Its system prompt says so explicitly.
   This matters: those strings were written by other people and end up in a model's
   context. See `SECURITY.md`.
+- It **never reads past the first `.END` of a data document.** The plain-text
+  brief underneath is prose assembled from those same untrusted strings, and a
+  page that parsed it would be handing them a second way in. One function draws
+  that line (`sliceEnvelope`), and it is the only one.
 
 ---
 
@@ -337,3 +359,5 @@ Worth knowing before you grant it anything:
       **pending sync** badge, and no tick.
 - [ ] `config.json` has the artifact URL in `artifact.url`.
 - [ ] The artifact is still **private**.
+- [ ] If you set up the phone Project (`docs/PHONE.md`): asking it "what am I
+      behind on?" answers from the brief, and does not try to decode the blob.

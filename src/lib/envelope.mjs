@@ -123,6 +123,32 @@ export function pack(kind, obj, opts = {}) {
 }
 
 /**
+ * The envelope at the head of a document, and nothing after it.
+ *
+ * The `<ns>-data` document carries the `AGD2` line, a blank line, and then a
+ * plain-text brief for a phone to read (`src/brief.mjs`). Every MACHINE reader
+ * has to stop at the first `.END` - the brief is prose written from untrusted
+ * strings, and a reader that kept going would be parsing it.
+ *
+ * Whitespace is stripped first, because a Doc inserts soft line breaks wherever
+ * it likes and one landing inside `.END` would otherwise hide the terminator.
+ * The first `.END` is unambiguous: base64 has no `.`, so the only dots in an
+ * envelope are its own separators.
+ *
+ * A document with no `.END` at all comes back unchanged, so `unpack` is the one
+ * that refuses it and says why. This function never validates and never
+ * decodes - it only decides where the message ends.
+ *
+ * @param {unknown} text the whole document body
+ * @returns {string} the envelope, terminator included
+ */
+export function sliceEnvelope(text) {
+  const s = String(text ?? "").replace(/\s+/g, "");
+  const end = s.indexOf(".END");
+  return end === -1 ? s : s.slice(0, end + 4);
+}
+
+/**
  * Read an envelope back. Throws EnvelopeError - never a silent bad parse - on
  * an unknown prefix, a missing terminator, an empty body, a bad checksum, a
  * corrupt gzip stream or JSON that does not parse.

@@ -42,6 +42,7 @@
   --now:#E5261B; --on-now:#FFFFFF;
   /* class meetings are structure, not work: a neutral band, never a course fill */
   --meet-fill:#ECEFF4; --meet-line:#DBDFE7; --ghost-line:#CBD0DA;
+  --mtg:#0F6E8C; --mtg-soft:#E4F1F6; --mtg-line:#B4D8E5;
   --sh-1:0 1px 2px rgba(16,20,28,.05);
   --sh-2:0 1px 2px rgba(16,20,28,.05),0 10px 26px -14px rgba(16,20,28,.28);
   --sh-pop:0 2px 6px rgba(16,20,28,.08),0 16px 34px -18px rgba(16,20,28,.34);
@@ -72,6 +73,7 @@
     --grid-line:#232429; --today-wash:#151B29; --wknd-wash:#121316;
     --now:#FF5247; --on-now:#2A0705;
     --meet-fill:#1C1D22; --meet-line:#30323A; --ghost-line:#3A3C44;
+    --mtg:#63C3E0; --mtg-soft:#0C2530; --mtg-line:#1D4A5C;
     --sh-1:0 1px 2px rgba(0,0,0,.5);
     --sh-2:0 1px 2px rgba(0,0,0,.5),0 12px 28px -16px rgba(0,0,0,.8);
     --sh-pop:0 2px 8px rgba(0,0,0,.55),0 18px 36px -18px rgba(0,0,0,.9);
@@ -102,6 +104,7 @@
   --grid-line:#232429; --today-wash:#151B29; --wknd-wash:#121316;
   --now:#FF5247; --on-now:#2A0705;
   --meet-fill:#1C1D22; --meet-line:#30323A; --ghost-line:#3A3C44;
+  --mtg:#63C3E0; --mtg-soft:#0C2530; --mtg-line:#1D4A5C;
   --sh-1:0 1px 2px rgba(0,0,0,.5);
   --sh-2:0 1px 2px rgba(0,0,0,.5),0 12px 28px -16px rgba(0,0,0,.8);
   --sh-pop:0 2px 8px rgba(0,0,0,.55),0 18px 36px -18px rgba(0,0,0,.9);
@@ -855,6 +858,77 @@ footer .approx{border-bottom:1px dotted currentColor}
 .cmeet.sm .cmm{display:none}
 .tg-col.past .cmeet{opacity:.45}
 
+/* ---- meetings from the user's own calendar -------------------------------- */
+/* Read-only. Nothing here is a control over the event - the pipeline never
+   writes to a calendar - so a meeting is drawn and never clicked.
+
+   THE SHAPE, not only the colour. A meeting and a class can land in the same
+   hour and must not read alike at a glance, so they differ in FORM: a class is a
+   neutral band ruled on the LEFT, a meeting is BRACKETED (a rule down both
+   edges) and carries a faint diagonal hatch across its fill. Both survive a cell
+   clipped to nothing, which is exactly when the title cannot help. The MTG tag
+   says it in words for anyone the shapes do not reach. */
+.gmeet{
+  position:absolute;left:2px;right:2px;z-index:1;overflow:hidden;
+  border-radius:var(--r-xs);
+  background-color:var(--mtg-soft);
+  background-image:repeating-linear-gradient(135deg,var(--mtg-line) 0 1px,transparent 1px 6px);
+  border:1px solid var(--mtg-line);
+  border-left:3px solid var(--mtg);border-right:3px solid var(--mtg);
+  display:flex;flex-direction:column;justify-content:center;gap:1px;
+  padding:2px 6px;min-width:0;
+}
+.gmeet .gmh{display:flex;align-items:center;gap:4px;min-width:0}
+.gmeet .gml{
+  font:600 9.5px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--mtg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
+}
+/* one glyph of text plus a drawn calendar mark - never an emoji and never an
+   image, so it survives a screenshot, a print, and a font with nothing exotic */
+.gmeet .gmtag{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:2px;
+  font:700 8px var(--ui);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--mtg);background:var(--surface);border:1px solid var(--mtg-line);
+  border-radius:999px;padding:0 4px;line-height:13px;
+}
+.gmeet .gmtag .gmico{width:7px;height:7px;flex:0 0 auto}
+.gmeet .gmw{
+  font:500 10.5px/1.25 var(--ui);color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.gmeet.sm{padding-top:0;padding-bottom:0}
+.gmeet.sm .gml{display:none}
+/* the source calendar marked it transparent - shown on the clock, never busy.
+   The same hollow, dashed grammar a freed study block uses, in the meeting's own
+   hue, so "on the calendar, not holding the hour" reads the same way everywhere */
+.gmeet.free{
+  background:transparent;
+  border:1px dashed var(--mtg-line);
+  border-left:1px dashed var(--mtg-line);border-right:1px dashed var(--mtg-line);
+}
+.gmeet.free .gmw{color:var(--sub)}
+.gmeet.free .gmtag{background:transparent}
+/* the two halves of a meeting that crosses midnight, torn at the wall */
+.gmeet.seg-head{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-style:dashed}
+.gmeet.seg-tail{border-top-left-radius:0;border-top-right-radius:0;border-top-style:dashed}
+.tg-col.past .gmeet{opacity:.45}
+
+/* an all-day meeting has no slot on the clock, so it stands in the day HEAD
+   under the date. A run longer than a day gets one chip per column it covers -
+   the head row is one flex line per day and cannot span. */
+.tg-dh .admtgs{flex:1 0 100%;display:flex;flex-direction:column;gap:2px;min-width:0}
+.admtg{
+  display:block;width:100%;min-width:0;margin:0;padding:1px 5px;
+  border:1px solid var(--mtg-line);border-left:3px solid var(--mtg);
+  border-radius:var(--r-xs);background:var(--mtg-soft);
+  font:500 10px/1.35 var(--ui);color:var(--ink);text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.admtg .aml{color:var(--mtg);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:9px}
+.admtg.free{background:transparent;border-style:dashed}
+.admtg.cont{border-left-style:dotted}
+.tg-dh.past .admtg{opacity:.62}
+
 /* ---- done control on every item card ------------------------------------- */
 /* Two affordances, deliberately different in weight. The checkbox is the quick
    tick for a row you are scanning past; the labelled button inside the open card
@@ -977,6 +1051,17 @@ footer .approx{border-bottom:1px dotted currentColor}
   display:inline-block;margin-left:6px;font:600 9px var(--ui);letter-spacing:.1em;text-transform:uppercase;
   color:var(--sub);background:var(--chip);border-radius:999px;padding:2px 6px;vertical-align:1px;
 }
+
+/* ---- calendar meetings in today's plan ------------------------------------ */
+/* Same row grammar as a class, in the meeting's own hue, because it is the same
+   KIND of thing - an hour already decided - from a different source. */
+.hrow.gmrow .hw{font-weight:500;color:var(--ink)}
+.hrow.gmrow .hrule{background:var(--mtg-line)}
+.hrow.gmrow .hc{color:var(--mtg)}
+.hrow.gmrow .hmins{color:var(--sub)}
+.hrow.gmrow.free .hrule{background:transparent;box-shadow:inset 0 0 0 1px var(--mtg-line)}
+.hrow.gmrow.free .hw{color:var(--sub)}
+.hcm.mtg{color:var(--mtg);background:var(--mtg-soft)}
 
 /* ---- done group: a quiet ledger, not another card grid -------------------- */
 .donegrp{
@@ -1596,6 +1681,12 @@ var REFUSE_GRACE_MS = 600000;
 var SIDE = CFG.buckets.side;   /* the side-project bucket's display name */
 var SIDE_CK = "k3";       /* reserved: never handed out to a course */
 var BOARD_CAP = 10;
+/* render.mjs already caps meetings[] at 80. These are the page's own bounds -
+   the payload is untrusted input like any other, and a document with 5,000
+   meetings must cost a slow render, never a hung tab. */
+var MEET_CAP = 120;        /* day ENTRIES, not events: one crossing midnight makes two */
+var MEET_SPREAD_MAX = 60;  /* how many day columns ONE all-day run may put a chip on */
+var MEET_CHIP_CHARS = 30;  /* the head chip is one line and cannot wrap */
 var LOGP = "[" + CFG.ns + "]";  /* every console line this page writes */
 var WEEKS_AHEAD = 5;
 var WEEKS_BACK = 4;
@@ -1696,8 +1787,23 @@ function acceptPayload(data) {
    first paint, and an await there would mean a page that flashes empty on every
    open. AGD1 is therefore decoded synchronously and is the only form render.mjs
    ever embeds; AGD2 exists only in Drive, where the read is already async. */
+/* The data doc carries the envelope, a blank line, and then a plain-text brief
+   for a phone to read. Every MACHINE reader stops at the first `.END`: the brief
+   is prose built out of strings other people wrote, and a reader that kept going
+   would be parsing it.
+
+   Whitespace goes first, because a Doc inserts soft line breaks wherever it
+   likes and one landing inside `.END` would hide the terminator. The FIRST
+   `.END` is unambiguous - base64 has no `.`, so the only dots in an envelope are
+   its own separators. A document with no `.END` comes back whole, so the
+   matchers below are the ones that refuse it. */
+function sliceEnv(text) {
+  var s = String(text || "").replace(/\s+/g, "");
+  var end = s.indexOf(".END");
+  return end === -1 ? s : s.slice(0, end + 4);
+}
 function decodePayloadSync(text) {
-  var m = /AGD1\.([A-Za-z0-9+/=\s]+)\.END/.exec(text || "");
+  var m = /^AGD1\.([A-Za-z0-9+/=]+)\.END$/.exec(sliceEnv(text));
   if (!m) return null;
   try { return acceptPayload(b64ToJson(m[1])); } catch (e) { return null; }
 }
@@ -1706,9 +1812,20 @@ function decodePayloadSync(text) {
 var decodeNote = null;
 async function decodePayload(text) {
   decodeNote = null;
-  var src = String(text || "");
-  var g = /AGD2\.([0-9a-fA-F]{8})\.([A-Za-z0-9+/=\s]+)\.END/.exec(src);
-  if (!g) return decodePayloadSync(src);
+  var src = sliceEnv(text);
+  var g = /^AGD2\.([0-9a-fA-F]{8})\.([A-Za-z0-9+/=]+)\.END$/.exec(src);
+  /* An AGD2 that does not validate is REFUSED, never retried as something else.
+     Falling back would mean a corrupt compressed doc could be accepted because
+     an older plain envelope happened to be sitting further down the same file -
+     which is precisely the "a shorter week that looks plausible" failure the
+     checksum exists to prevent. */
+  if (!g) {
+    if (src.slice(0, 5) === "AGD2.") {
+      decodeNote = "data doc unreadable (truncated)";
+      return null;
+    }
+    return decodePayloadSync(src);
+  }
   if (!canGunzip()) {
     decodeNote = "this browser cannot read compressed data";
     return null;
@@ -1804,11 +1921,94 @@ function safeUrl(u) {
 /* Every array is defaulted and every field is re-checked here, because the
    payload arrives as text from a document a human could have edited. Nothing
    below this function ever validates a payload field again. */
+/* ---- meetings inherited from the user's own calendar ----------------------
+   The payload states an event ONCE. The page states it once per day COLUMN it
+   occupies, because a column is what the grid draws - so this is the one place
+   a meeting is split. An event running past midnight becomes a head entry cut
+   at the wall and a tail entry opening the next column at 00:00; an all-day
+   event keeps its first day and a `days` count the index spreads across the
+   header row later.
+
+   Every function below is PURE and returns NEW objects: the payload array is
+   read on every render and must never be written to. Anything unreadable
+   yields [] - a missing meeting, never a broken page, which is the bargain
+   every other normalizer in this file makes. */
+var MEET_DAYK = /^\d{4}-\d{2}-\d{2}$/;
+
+function meetBase(m) {
+  return {
+    k: m.k,
+    feed: typeof m.feed === "string" && m.feed ? m.feed : "",
+    lbl: typeof m.lbl === "string" && m.lbl ? m.lbl : "Calendar",
+    t: typeof m.t === "string" && m.t ? m.t : "(untitled)",
+    loc: typeof m.loc === "string" && m.loc.trim() ? m.loc.trim() : null,
+    url: safeUrl(m.url),
+    /* transparent on the source calendar - drawn, but never busy time */
+    free: m.free === true,
+    ad: m.ad === true
+  };
+}
+function meetDay(base, dk, sm, em, days, seg) {
+  var o = {}, keys = Object.keys(base), i;
+  for (i = 0; i < keys.length; i++) o[keys[i]] = base[keys[i]];
+  o.dk = dk; o.sm = sm; o.em = em; o.days = days; o.seg = seg;
+  return o;
+}
+/* all-day: `s`/`e` are DAY KEYS and `e` is EXCLUSIVE (RFC 5545), so a one-day
+   event has e = s + 1 */
+function meetAllDay(base, m) {
+  if (typeof m.s !== "string" || !MEET_DAYK.test(m.s)) return [];
+  var e = typeof m.e === "string" && MEET_DAYK.test(m.e) ? m.e : addDays(m.s, 1);
+  var days = Math.round((dkMs(e) - dkMs(m.s)) / 86400000);
+  if (!(days > 0)) days = 1;
+  return [meetDay(base, m.s, null, null, days, "")];
+}
+/* timed: `s`/`e` are ISO instants, read as a wall clock in the payload's zone by
+   the SAME helpers an item's `ms` goes through, so a meeting and a deadline can
+   never disagree about which day they are on */
+function meetTimed(base, m) {
+  var s2 = Date.parse(m.s), e = Date.parse(m.e);
+  if (isNaN(s2)) return [];
+  if (isNaN(e) || e <= s2) e = s2 + 3600000;   /* no end: an hour, as the ingest assumes */
+  var dk1 = dayKey(s2), sm = localMin(s2);
+  var dk2 = dayKey(e), em = localMin(e);
+  if (sm === null || em === null) return [];   /* a runtime that cannot resolve TZ */
+  /* an end exactly on midnight closes the day it belongs to rather than
+     claiming the first minute of the next one */
+  if (em === 0 && dk2 !== dk1) { dk2 = dk1; em = GRID_END; }
+  if (dk2 === dk1) return [meetDay(base, dk1, sm, Math.max(em, sm + 1), 1, "")];
+  /* past midnight. A timed event spanning more than one wall is a calendar
+     oddity, not something a day column can draw, so the tail is clipped to the
+     very next column and fills it. */
+  if (dk2 !== addDays(dk1, 1)) { dk2 = addDays(dk1, 1); em = GRID_END; }
+  return [
+    meetDay(base, dk1, sm, GRID_END, 1, "head"),
+    meetDay(base, dk2, 0, Math.max(em, 1), 1, "tail")
+  ];
+}
+function meetingDays(m) {
+  if (!m || typeof m !== "object") return [];
+  if (typeof m.k !== "string" || !m.k) return [];
+  var base = meetBase(m);
+  return base.ad ? meetAllDay(base, m) : meetTimed(base, m);
+}
+/* all-day entries lead their day (they belong in the header, above the clock),
+   then the timed ones in clock order, then by key so the order is total */
+function meetOrder(a, b) {
+  if (a.dk !== b.dk) return a.dk < b.dk ? -1 : 1;
+  var as = a.sm === null ? -1 : a.sm, bs = b.sm === null ? -1 : b.sm;
+  if (as !== bs) return as - bs;
+  return a.k < b.k ? -1 : (a.k > b.k ? 1 : 0);
+}
+
 function normalize(raw) {
   var d = {
     v: 0, scrapedAt: null, items: [], announcements: [],
     mail: [], focus: [], standardsPlan: null, errors: [], weights: {},
-    schedule: [], board: [], done: []
+    schedule: [], board: [], done: [],
+    /* absent in every payload before this one, and an empty array reads exactly
+       as that absence did */
+    meetings: []
   };
   if (!raw || typeof raw !== "object") return d;
   d.v = typeof raw.v === "number" ? raw.v : 0;
@@ -1952,6 +2152,24 @@ function normalize(raw) {
       upd: typeof ke.upd === "string" ? ke.upd : null
     });
   }
+
+  /* --- meetings inherited from the user's own calendar --------------------- */
+  /* One key may claim one day column. The ingest dedupes upstream, but the page
+     is the last line of defence. The identity is (key, day), NOT the key alone,
+     because a meeting cut at midnight legitimately owns two day entries under
+     one key. */
+  var mt2 = Array.isArray(raw.meetings) ? raw.meetings : [];
+  var mseen = {};
+  for (var mi = 0; mi < mt2.length && d.meetings.length < MEET_CAP; mi++) {
+    var parts = meetingDays(mt2[mi]);
+    for (var mj = 0; mj < parts.length && d.meetings.length < MEET_CAP; mj++) {
+      var mid = parts[mj].k + "\u0000" + parts[mj].dk;
+      if (mseen[mid] === 1) continue;
+      mseen[mid] = 1;
+      d.meetings.push(parts[mj]);
+    }
+  }
+  d.meetings.sort(meetOrder);
 
   /* --- completions the pipeline already knows about ----------------------- */
   var dn = Array.isArray(raw.done) ? raw.done : [];
@@ -2420,7 +2638,8 @@ function markState(k) {
 }
 /* `s: true` DOES NOT MEAN WHAT IT LOOKS LIKE, and this is the single sharpest
    trap in the completion path. Two very different facts wear it:
-     - Brightspace scraped a submission. Pipeline-origin, final, contract sec 2.
+     - a source scraped a submission. Pipeline-origin, final; docs/PROTOCOL.md
+       section 4 has the tri-state rule.
      - the pipeline folded one of the USER'S OWN marks into the item.
        completion.mjs applyUserCompletions() literally does
        `addSource(markSubmitted(it, true), "user")`, so one agent run turns every
@@ -2433,7 +2652,7 @@ function markState(k) {
 function userSubmit(it) {
   return it.s === true && !!it.src && it.src.indexOf("user") >= 0;
 }
-/* Brightspace's own word, which nothing on this page may overrule */
+/* A SOURCE's own word, which nothing on this page may overrule */
 function pipeSubmit(it) { return it.s === true && !userSubmit(it); }
 
 /* ONE answer for every deliverable surface. The card ring, the grid chip, the
@@ -2471,7 +2690,7 @@ function itemUi(it) {
   return { st: "todo", mine: false };
 }
 /* An item reads as done when it is finished - by the user, by the pipeline, or
-   by Brightspace. Cancelled is emphatically NOT done, so it gets its own test,
+   by a source. Cancelled is emphatically NOT done, so it gets its own test,
    and `isSettled` is what the pressure counts and the overdue lane want: both
    states mean the item is no longer owed. All three go through itemUi, so an
    uncheck repaints the item on the very next render rather than leaving it blue
@@ -3339,8 +3558,12 @@ function doneAction(it, compact) {
         : "You marked this. Undo works even after it has synced.",
       unsent ? " warn" : "") + "</div>";
   }
+  /* The page serves whatever sources the pipeline was pointed at, and it is
+     published once - so it can never name one. "A source" is the honest word:
+     what it means is "this did not come from you", which is exactly what the
+     sentence after it goes on to say. */
   var who = ui.lab === "Submitted"
-    ? "Brightspace has it as submitted."
+    ? "A source has it as submitted."
     : "Recorded by " + (VIA_LABEL[ui.via] || ui.via) + ".";
   return '<div class="cacts' + sz + '">' + state2 +
     note(esc(who) + " That came from the pipeline, not from you, so it cannot be undone here.") +
@@ -3412,7 +3635,7 @@ function cellHtml(it, now, showDay, footAction) {
   var settled = ui.st !== "todo";
   /* a cancelled item is not overdue and is never "start now": the pressure it
      used to carry is exactly what cancelling it took away. `settled` already
-     covers Brightspace's own s:true, so this no longer tests it.s directly -
+     covers a source's own s:true, so this no longer tests it.s directly -
      an item whose s:true came from a mark the user has since revoked is owed
      again, and must be able to come back to this lane. */
   var overdue = late && !settled;
@@ -3556,6 +3779,42 @@ function meetsFor(dk, schedule) {
   return out;
 }
 
+/* day key -> the calendar meetings standing on that column. Timed entries are
+   already per-column (normalize cut them at midnight); an ALL-DAY run is spread
+   here, one chip per day it covers, each a NEW object that knows which part of
+   the run it is so a long conference does not read as one event per day. PURE. */
+function meetIndex(meetings) {
+  var by = {}, i, j, m, dk, n, spread, o, keys, ki;
+  for (i = 0; i < meetings.length; i++) {
+    m = meetings[i];
+    if (!m.ad) { (by[m.dk] || (by[m.dk] = [])).push(m); continue; }
+    n = m.days > 0 ? m.days : 1;
+    /* `parts` stays the TRUE length so a chip can say "day 3 of 30"; only how
+       many chips are actually laid down is bounded */
+    spread = n > MEET_SPREAD_MAX ? MEET_SPREAD_MAX : n;
+    for (j = 0; j < spread; j++) {
+      dk = addDays(m.dk, j);
+      o = {}; keys = Object.keys(m);
+      for (ki = 0; ki < keys.length; ki++) o[keys[ki]] = m[keys[ki]];
+      o.dk = dk; o.part = j; o.parts = n;
+      (by[dk] || (by[dk] = [])).push(o);
+    }
+  }
+  return by;
+}
+/* the timed ones only - what the canvas draws */
+function meetTimedFor(list) {
+  var out = [], i;
+  for (i = 0; i < list.length; i++) if (!list[i].ad) out.push(list[i]);
+  return out;
+}
+/* the all-day ones only - what the day head draws */
+function meetAllDayFor(list) {
+  var out = [], i;
+  for (i = 0; i < list.length; i++) if (list[i].ad) out.push(list[i]);
+  return out;
+}
+
 function dayModel(dk, idx, todayKey) {
   var f = idx.focusByDay[dk] || null;
   var items = idx.byDay[dk] || [];
@@ -3568,6 +3827,7 @@ function dayModel(dk, idx, todayKey) {
   return {
     dk: dk, blocks: f ? f.blocks : [], note: f ? f.note : null, load: f ? f.load : 0,
     items: items, marks: marks, off: off, meets: meetsFor(dk, idx.schedule || []),
+    mts: (idx.meetsByDay && idx.meetsByDay[dk]) || [],
     isToday: dk === todayKey, past: dk < todayKey
   };
 }
@@ -3655,6 +3915,11 @@ function gridWindow(days, nowMin) {
     for (j = 0; j < day.blocks.length; j++)
       if (day.blocks[j].timed) spans.push([day.blocks[j].sm, day.blocks[j].em]);
     for (j = 0; j < day.meets.length; j++) spans.push([day.meets[j].sm, day.meets[j].em]);
+    /* a calendar meeting occupies time exactly as a lecture does, so both edges
+       count: an 08:15 standup has to be on screen even when nothing is planned
+       before noon. All-day entries have no clock slot and set no span. */
+    for (j = 0; j < day.mts.length; j++)
+      if (!day.mts[j].ad) spans.push([day.mts[j].sm, day.mts[j].em]);
     for (j = 0; j < day.marks.length; j++) moments.push(day.marks[j].m);
     if (day.isToday) todayShown = true;
   }
@@ -3680,6 +3945,48 @@ function meetHtml(m, win) {
     ' title="' + esc(label) + '">' +
     '<span class="cmc">' + esc(m.c) + "</span>" +
     '<span class="cmm">' + esc(meta) + "</span></div>";
+}
+
+/* Drawn, never an image and never an emoji: one calendar mark plus three
+   letters, so it survives a screenshot, a print, and a font with nothing
+   exotic in it. Built once - it never varies. */
+var MEET_TAG =
+  '<span class="gmtag"><svg class="gmico" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+  '<rect x="1" y="2.6" width="10" height="8.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+  '<path d="M1 5.6h10M3.9 1v2.4M8.1 1v2.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+  "</svg>MTG</span>";
+
+/* One timed meeting, in one column. Read-only: the pipeline never writes to a
+   calendar, so there is nothing here to press. */
+function gmeetHtml(m, win) {
+  var top = gpct(win, m.sm), bot = gpct(win, m.em);
+  var h = Math.max(bot - top, 0.5);
+  var label = m.lbl + " meeting, " + m.t + ", " +
+    minLabel(m.sm) + " to " + minLabel(m.em) + (m.loc ? ", " + m.loc : "") +
+    (m.free ? ", on the calendar but not holding the time" : "") +
+    (m.seg === "head" ? ". It runs past midnight and continues in the next day"
+      : (m.seg === "tail" ? ". The second half of a meeting that started the day before" : ""));
+  return '<div class="gmeet' + (m.free ? " free" : "") +
+    (m.seg ? " seg-" + m.seg : "") + (m.em - m.sm < 45 ? " sm" : "") +
+    '" style="top:' + fx(top) + "%;height:" + fx(h) + '%"' +
+    ' title="' + esc(label) + '" aria-label="' + esc(label) + '">' +
+    '<span class="gmh"><span class="gml">' + esc(m.lbl) + "</span>" + MEET_TAG + "</span>" +
+    '<span class="gmw">' + esc(m.t) + "</span></div>";
+}
+
+/* An all-day meeting has no slot on the clock, so it stands in the day HEAD
+   under the date. Each chip says which part of a longer run it is, so the
+   middle of a conference never reads as a separate event. */
+function admtgHtml(m) {
+  var t = m.t.length > MEET_CHIP_CHARS ? m.t.slice(0, MEET_CHIP_CHARS - 1) + "\u2026" : m.t;
+  var which = m.parts > 1 ? " (day " + (m.part + 1) + " of " + m.parts + ")" : "";
+  var label = "All day, " + m.lbl + ", " + m.t + which +
+    (m.loc ? ", " + m.loc : "") +
+    (m.free ? ", on the calendar but not holding the day" : "");
+  return '<span class="admtg' + (m.free ? " free" : "") + (m.part > 0 ? " cont" : "") + '"' +
+    ' title="' + esc(m.lbl + " \u00B7 " + m.t + which) + '"' +
+    ' aria-label="' + esc(label) + '">' +
+    '<span class="aml">' + esc(m.lbl) + "</span> " + esc(t) + "</span>";
 }
 
 function blockHtml(b, win, isToday, nowMin) {
@@ -3762,7 +4069,7 @@ function markChipHtml(it, min, now) {
   var done = ui.st === "done";
   var cancelled = ui.st === "cancelled";
   var settled = ui.st !== "todo";
-  /* `settled` already accounts for Brightspace's own s:true, and deliberately
+  /* `settled` already accounts for a source's own s:true, and deliberately
      does NOT account for an s:true the user has revoked - see itemUi */
   var overdue = late && !settled;
   var startNow = !late && !settled && (it.ms - now) <= leadFor(it.ty) * 86400000;
@@ -3824,6 +4131,10 @@ function dayHeadHtml(day, showMon) {
   var dow = dowOf(day.dk);
   if (!day.isToday && (dow === 0 || dow === 6)) cls += " wknd";
   var due = day.items.length;
+  /* an all-day meeting owns the DAY, not an hour of it, so it belongs here
+     under the date rather than as a full-height bar down the column */
+  var ad = meetAllDayFor(day.mts), adHtml = "", i;
+  for (i = 0; i < ad.length; i++) adHtml += admtgHtml(ad[i]);
   return '<div class="' + cls + '">' +
     '<span class="dow">' + esc(F_DOW.format(dt)) + "</span>" +
     '<span class="dnum">' + esc(String(dt.getUTCDate())) + "</span>" +
@@ -3831,7 +4142,9 @@ function dayHeadHtml(day, showMon) {
     '<span class="dmeta">' +
     (day.load ? '<span class="dload">' + esc(durTxt(day.load)) + "</span>" : "") +
     (due ? '<span class="ddue">' + due + " due</span>" : "") +
-    "</span></div>";
+    "</span>" +
+    (adHtml ? '<span class="admtgs">' + adHtml + "</span>" : "") +
+    "</div>";
 }
 
 /* An all-day block is a session with no clock slot. Same identity, same
@@ -3942,11 +4255,25 @@ function blkPill() {
   if (c.pending) return { cls: "warn", txt: word(c.pending) + " waiting to sync" };
   return { cls: "ok", txt: word(c.sent) + " sent" };
 }
+/* THE CONNECTOR'S NAME IS A BUILD VALUE, NOT A LITERAL.
+   Three write paths - marks, block edits, added tasks - fail for the same three
+   connector reasons and used to spell the name into nine separate sentences. A
+   user whose connector is called something else then read nine instructions
+   naming one they do not have. This is the one place it is said, and
+   `CFG.driveConnector` is where the name comes from.
+   Returns null for every other code, so each caller keeps its own wording for
+   the failures that mean different things to it. */
+function connectorMessage(code) {
+  var name = CFG.driveConnector;
+  if (code === "needs_reauth") return "Reconnect " + name + " in claude.ai Settings, then retry.";
+  if (code === "server_not_connected") return "Add the " + name + " connector in claude.ai Settings, then retry.";
+  if (code === "selection_required") return "Pick a " + name + " connector when prompted, then retry.";
+  return null;
+}
 /* the FC1 writer's code taxonomy, said about a move instead of a mark */
 function blkMessage(code) {
-  if (code === "needs_reauth") return "Reconnect Google Drive in claude.ai Settings, then retry.";
-  if (code === "server_not_connected") return "Add the Google Drive connector in claude.ai Settings, then retry.";
-  if (code === "selection_required") return "Pick a Google Drive connector when prompted, then retry.";
+  var conn = connectorMessage(code);
+  if (conn) return conn;
   if (code === "blocked_by_policy" || code === "approval_required")
     return "Writing to Drive is not approved for this page.";
   if (code === "not_in_manifest")
@@ -3977,9 +4304,8 @@ function blkNoteHtml() {
    and mean different things by them, and a shared string that has to hedge
    between "the move" and "the task" is worse than either. */
 function addMessage(code) {
-  if (code === "needs_reauth") return "Reconnect Google Drive in claude.ai Settings, then retry.";
-  if (code === "server_not_connected") return "Add the Google Drive connector in claude.ai Settings, then retry.";
-  if (code === "selection_required") return "Pick a Google Drive connector when prompted, then retry.";
+  var conn = connectorMessage(code);
+  if (conn) return conn;
   if (code === "blocked_by_policy" || code === "approval_required")
     return "Writing to Drive is not approved for this page.";
   if (code === "not_in_manifest")
@@ -4124,6 +4450,11 @@ function boardHtml(d, idx, now, todayKey, nowMin) {
     if (!day.isToday && (dow2 === 0 || dow2 === 6)) ccls += " wknd";
     var body = "";
     for (j = 0; j < day.meets.length; j++) body += meetHtml(day.meets[j], win);
+    /* after the lectures and before the study blocks: a meeting is a fixture
+       like a lecture, and a block the user dragged on top of one must stay
+       visible on top of it */
+    var mtimed = meetTimedFor(day.mts);
+    for (j = 0; j < mtimed.length; j++) body += gmeetHtml(mtimed[j], win);
     for (j = 0; j < day.blocks.length; j++)
       if (day.blocks[j].timed) body += blockHtml(day.blocks[j], win, day.isToday, nowMin);
     body += marksHtml(day, win, now);
@@ -4164,6 +4495,10 @@ function buildIndex(d, now, todayKey, nowMin) {
     var fb = idx.focusByDay[fkeys[i]].blocks;
     for (var fj = 0; fj < fb.length; fj++) state.blockByKey[fb[fj].key] = fb[fj];
   }
+
+  /* built once per render: every day column asks for its own meetings, and
+     spreading an all-day run per column is the only work here worth caching */
+  idx.meetsByDay = meetIndex(d.meetings);
 
   var horizonStart = addDays(weekStart(todayKey), (WEEKS_AHEAD + 1) * 7);
   idx.horizon = horizonStart;
@@ -4356,8 +4691,12 @@ function heroHtml(d, idx, now, todayKey, nowMin) {
   var meets = [], allMeets = meetsFor(todayKey, d.schedule);
   for (i = 0; i < allMeets.length; i++) if (allMeets[i].attend) meets.push(allMeets[i]);
 
+  /* the hours the user has already promised somewhere else. They are not
+     decided here either, and they sit in the same column, in clock order. */
+  var mtg = (idx.meetsByDay && idx.meetsByDay[todayKey]) || [];
+
   var inner;
-  if (blocks.length || meets.length) {
+  if (blocks.length || meets.length || mtg.length) {
     var rows = [];
     for (i = 0; i < blocks.length; i++) {
       var b = blocks[i];
@@ -4405,6 +4744,26 @@ function heroHtml(d, idx, now, todayKey, nowMin) {
           '<span class="hmins">' + esc(durTxt(m.em - m.sm)) + "</span></li>"
       });
     }
+    for (i = 0; i < mtg.length; i++) {
+      var g = mtg[i];
+      var glive = !g.ad && nowMin !== null && nowMin >= g.sm && nowMin < g.em;
+      rows.push({
+        /* an all-day meeting has no hour, so it leads the day the way an
+           untimed block trails it: -1 sorts it above every clock row */
+        sm: g.ad ? -1 : g.sm,
+        html: '<li class="hrow gmrow' + (g.free ? " free" : "") + (glive ? " live" : "") + '">' +
+          '<span class="hts">' +
+          (g.ad ? "all day" : esc(minLabel(g.sm)) + " \u2013<br>" + esc(minLabel(g.em))) +
+          "</span><span class=\"hrule\"></span>" +
+          '<span class="hmain"><span class="hc">' + esc(g.lbl) +
+          '<span class="hcm mtg">meeting</span>' +
+          (glive ? '<span class="hnow">now</span>' : "") + "</span>" +
+          '<span class="hw">' + esc(g.t) + "</span>" +
+          (g.loc ? '<span class="hy">' + esc(g.loc) + "</span>" : "") + "</span>" +
+          '<span class="hmins">' +
+          (g.ad ? "all day" : esc(durTxt(g.em - g.sm))) + "</span></li>"
+      });
+    }
     rows.sort(function (a, b2) {
       if (a.sm === null && b2.sm === null) return 0;
       if (a.sm === null) return 1;
@@ -4414,7 +4773,7 @@ function heroHtml(d, idx, now, todayKey, nowMin) {
     var out = "";
     for (i = 0; i < rows.length; i++) out += rows[i].html;
     var note = entry && entry.note ? entry.note
-      : (!blocks.length ? "No study plan written for today - only the classes above are fixed." : null);
+      : (!blocks.length ? "No study plan written for today - only the fixed hours above." : null);
     inner = '<ol class="hero-rows">' + out + "</ol>" +
       (note ? '<p class="hero-note">' + esc(note) + "</p>" : "");
   } else {
@@ -5542,7 +5901,7 @@ reconcileOverlay();/* measured against the embedded payload, before anything pai
 render();
 setStamp(state.data, current ? "embedded copy" : "no embedded data");
 
-/* Live refresh from Google Drive via the viewer's connector */
+/* Live refresh from the viewer's own Drive connector (CFG.driveConnector) */
 var mcpReady = null;
 var driveName = DRIVE;
 /* The one way in. Served top-level, or opened as a plain file, there is no
@@ -5657,12 +6016,8 @@ async function refresh(manual) {
    in localStorage before any of this runs, so a failed save costs nothing but
    the delay. */
 function syncMessage(code) {
-  if (code === "needs_reauth")
-    return "Reconnect Google Drive in claude.ai Settings, then retry.";
-  if (code === "server_not_connected")
-    return "Add the Google Drive connector in claude.ai Settings, then retry.";
-  if (code === "selection_required")
-    return "Pick a Google Drive connector when prompted, then retry.";
+  var conn = connectorMessage(code);
+  if (conn) return conn;
   if (code === "blocked_by_policy" || code === "approval_required")
     return "Writing to Drive is not approved for this page.";
   if (code === "not_in_manifest")

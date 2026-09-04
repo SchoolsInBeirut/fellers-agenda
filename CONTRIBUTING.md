@@ -106,7 +106,7 @@ network.
 Use the [bug report form](.github/ISSUE_TEMPLATE/bug_report.yml). It asks for
 your OS, your Node version, which connectors are on, and a **redacted** log
 excerpt. Redacted means: no email addresses, no course names, no document ids,
-no tokens. The status tokens (`drive=OK(6712)`, `behind=notice(B3)`,
+no tokens. The status tokens (`drive=ok(7KB)`, `behind=notice(B3)`,
 `cmd=REFUSED`) are what a maintainer actually needs and they carry nothing
 private. A `data/auth-probe.json` from `node scripts/reauth.mjs --probe` is safe
 to attach too — it holds no credentials.

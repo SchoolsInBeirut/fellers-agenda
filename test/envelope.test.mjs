@@ -30,6 +30,7 @@ import {
   crc32,
   pack,
   packWithinBudget,
+  sliceEnvelope,
   slimTiers,
   unpack,
 } from "../src/lib/envelope.mjs";
@@ -444,4 +445,48 @@ test("golden size: at production scale the ratio passes 5x, which is what the tr
   const gz = pack("data", payload).length;
   assert.ok(plain > 40000, `the scaled payload should be production-sized, was ${plain}`);
   assert.ok(plain / gz >= 5, `ratio was ${(plain / gz).toFixed(2)} (plain ${plain}, gzip ${gz})`);
+});
+
+// ---------------------------------------------------------------------------
+// sliceEnvelope - where the machine-readable half of a document ends
+// ---------------------------------------------------------------------------
+//
+// The `<ns>-data` document carries the envelope, a blank line, and then a
+// plain-text brief for a phone (src/brief.mjs). Everything after the first
+// `.END` is prose built out of strings other people wrote, and a reader that
+// kept going would be parsing it.
+
+test("sliceEnvelope stops at the first .END and hands back the envelope alone", () => {
+  const env = pack("data", { v: 4, hello: "world" });
+  const doc = `${env}\n\n--- BRIEF ---\nDUE IN 48H\n  nothing\n--- END BRIEF ---\n`;
+  assert.equal(sliceEnvelope(doc), env);
+  assert.deepEqual(unpack(sliceEnvelope(doc)).data, { v: 4, hello: "world" });
+});
+
+test("a brief that contains something envelope-shaped is still never parsed", () => {
+  // The worst case the design has to survive: an assignment title that reads
+  // like a wire message. The brief is prose; it can say anything.
+  const env = pack("data", { v: 4, real: true });
+  const doc = `${env}\n\nAGD1.${Buffer.from('{"v":4,"real":false}', "utf8").toString("base64")}.END\n`;
+  assert.equal(unpack(sliceEnvelope(doc)).data.real, true);
+});
+
+test("sliceEnvelope survives the soft line breaks a Doc inserts inside .END", () => {
+  const env = pack("data", { v: 4 });
+  const broken = env.slice(0, -2) + "\n" + env.slice(-2) + "\n\n--- BRIEF ---\n";
+  assert.equal(sliceEnvelope(broken), env);
+});
+
+test("a document with no .END at all comes back whole, so unpack is the one that refuses", () => {
+  assert.equal(sliceEnvelope("AGD1.abc"), "AGD1.abc");
+  assert.throws(() => unpack(sliceEnvelope("AGD1.abc")), EnvelopeError);
+  assert.equal(sliceEnvelope(null), "");
+  assert.equal(sliceEnvelope(undefined), "");
+});
+
+test("slicing changes nothing about validation: a corrupt AGD2 is still refused", () => {
+  const env = pack("data", { v: 4, n: 1 });
+  const flipped = env.replace(/^AGD2\.([0-9a-f]{8})\./, "AGD2.00000000.");
+  const doc = `${flipped}\n\n--- BRIEF ---\n`;
+  assert.throws(() => unpack(sliceEnvelope(doc)), /checksum/);
 });

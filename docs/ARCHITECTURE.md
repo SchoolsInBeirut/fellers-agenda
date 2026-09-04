@@ -27,6 +27,10 @@ flowchart TD
   STATE[("user state<br/>marks · blocks · study log")] --> RENDER
   MODEL["study-model.mjs<br/>how much each course deserves"] --> RENDER
   FOCUS["focus-engine.mjs<br/>deterministic planner"] --> RENDER
+  CAL["your own calendar<br/>(a connector YOU authorized)"] -->|agent saves the answer verbatim| RAW[("data/tmp/gcal-raw.json")]
+  RAW -->|gcal-ingest.mjs| GCAL[("data/gcal-items.json")]
+  GCAL --> FOCUS
+  GCAL --> RENDER
   RENDER["render.mjs"] --> B64[("data/payload.b64.txt<br/>AGD2 · gzip + crc32")]
   RENDER --> HTML[("agenda.html<br/>AGD1 embedded")]
   B64 -->|agent uploads| DOC["Drive doc: ns-data"]
@@ -51,7 +55,7 @@ the phone is impatient.
 |---|---|---|
 | **How often** | Twice a day | Every two hours, in waking hours |
 | **Budget** | Ten minutes, occasionally more | **Two minutes** |
-| **Scrapes?** | Yes — everything | **Never** |
+| **Scrapes?** | Yes — everything | **Never** (one exception: the inbound calendar, which is a single connector call) |
 | **Writes descriptions?** | Yes, for new items only | No |
 | **Mirrors state?** | Yes | No |
 | **Email?** | The morning digest, at most one | **Never** |
@@ -207,8 +211,11 @@ not*. See `docs/design-notes/data-truth.md`.
 
 - **`agenda.html`** — the page with a **plain** `AGD1.` envelope embedded, so it
   paints instantly and works with no network at all.
-- **`data/payload.b64.txt`** — the same payload as a **gzipped, CRC-guarded**
-  `AGD2.` envelope, which an agent uploads to Drive.
+- **`data/payload.b64.txt`** — the whole `<ns>-data` document an agent uploads
+  to Drive: the same payload as a **gzipped, CRC-guarded** `AGD2.` envelope, a
+  blank line, and then a **plain-text brief** (`src/brief.mjs`) for a phone to
+  read. Every machine reader stops at the first `.END`, so the brief is invisible
+  to the page; `docs/PHONE.md` is what reads it.
 
 You publish `agenda.html` once as a Claude Artifact. From then on the page
 **fetches its own data** from a Google Doc on load and on refresh, which is what

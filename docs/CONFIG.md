@@ -227,6 +227,86 @@ sittings, which are the subtle part.
 
 ---
 
+## Inbound calendar (optional, off by default)
+
+```jsonc
+"calendars": {
+  "gcal": {
+    "enabled": false,
+    "calendarId": "primary",
+    "feed": "calendar",
+    "label": "Calendar",
+    "maxEvents": 200,
+    "skipUidSuffix": "[NOT SET]",
+    "skipDescriptionMarker": "Auto-created by the agenda."
+  }
+}
+```
+
+**This is the direction nothing else in the config covers.** `connectors.calendar.*`
+is a **sink**: it writes your deadlines *out*, to Outlook or to an `.ics` file.
+This block is the opposite - it reads your own meetings *in*, so the planner
+knows which hours are already spoken for and never books study on top of one.
+
+It is off by default because it costs something the rest of the pipeline does
+not: a calendar connector authorized in **your own** Claude account. The
+pipeline holds no calendar credentials and never will. A scheduled run calls
+that connector itself, saves the answer verbatim to a file, and hands the file
+to `src/connectors/gcal-ingest.mjs`, which decides what it means.
+`runbooks/heavy-run.md` section 7.0 is the exact step.
+
+| Key | What it does |
+|---|---|
+| `enabled` | The switch, and it must be `true` or `false` - not `"true"`. Absent or `false` and the whole route is dormant: no connector call, an empty `meetings[]`, and a page that renders exactly as it did before |
+| `calendarId` | What you pass the connector. Usually `primary`; a specific calendar's address works too |
+| `feed` | Prefixes every meeting key (`<feed>\|<uid>\|<start>`). Lowercase letters, digits and hyphens, at most 24 characters. **`fb` is refused**: that prefix already names study sessions (`fb\|<day>\|<bucket>`) |
+| `label` | What the page shows on the meeting band and in the day head. 1 to 24 characters |
+| `maxEvents` | How many meetings one document may carry, **earliest-start first** - the events are sorted by start and the first `maxEvents` are kept, so it is the far end of the window that falls off. A whole number from 1 to 5000; the default 200 is a payload-size guard, not an opinion about your week |
+| `skipUidSuffix` | **The loop guard.** `[NOT SET]` means "derive it from `namespace`", which is what you want. `""` switches the rule off |
+| `skipDescriptionMarker` | The second, independent loop guard - the literal every ICS-sink event's body ends with |
+
+Every one of those is checked when the config loads: a wrong type, a feed id
+outside the charset or a `maxEvents` of `0` is a `ConfigError` naming the key,
+not a value that loads quietly and then behaves as though you had left it out.
+An unknown key under `calendars.gcal` warns, exactly as an unknown top-level key
+does.
+
+**The switch is read by the code, not only by the runbook.** `render.mjs` opens
+`data/gcal-items.json` only while `enabled` is `true`, so turning the route off
+empties `meetings[]` on the next render even if the file is still there; and
+`gcal-ingest.mjs`, run while the block is off, prints one `skipped=disabled`
+line, writes nothing and exits 0. A scheduled step that fires anyway is
+therefore harmless, and the two halves can never disagree about what is on disk.
+
+### The loop guard, and why there are two of them
+
+If you also run the ICS sink, your calendar already contains this agenda's own
+deadlines. Read them straight back in and every deadline is drawn twice, and the
+planner refuses to plan around a block it invented itself.
+
+So two rules mark an event as one of ours, and either alone is enough:
+
+- **the UID.** `src/connectors/calendar-ics.mjs` writes
+  `<hash>-<role>@<namespace>.agenda.local`, and a calendar that imported the file
+  keeps that UID inside its own event id. This one is **proof**.
+- **the description.** Every sink event's body ends with
+  `Auto-created by the agenda.` This one is a **heuristic** - it can hit a real
+  meeting whose body happens to quote an agenda invite - so an event skipped by
+  this rule *alone* is counted and warned about rather than dropped silently.
+
+Set `skipUidSuffix` to `""` to switch the UID rule off entirely. There is
+normally no reason to.
+
+### What it never does
+
+It never writes to your calendar. `gcal-ingest.mjs` has no network access at all
+- it reads one local file and writes one local file - and the runbook step is
+restricted to the connector's **list** and **get** tools. It also never stores
+attendee data: `attendees`, `organizer`, `creator` and conference details are
+not read, so they cannot reach the payload, the page, or a Drive document.
+
+---
+
 ## Side project (optional)
 
 ```jsonc

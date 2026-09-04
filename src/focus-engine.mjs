@@ -340,6 +340,10 @@ export const DEFAULT_TUNING = Object.freeze({
 export const HARD_DAY_START = 8 * 60;
 export const HARD_DAY_END = 23 * 60;
 export const MIN_BLOCK_MINUTES = 30;
+/** One local day in minutes - the clip boundary for a meeting crossing midnight. */
+export const MINUTES_PER_DAY = 24 * 60;
+/** A timed meeting longer than this many days is malformed; clip it rather than loop. */
+export const MEETING_MAX_DAYS = 14;
 export const MAX_BLOCK_MINUTES = 150;
 export const BLOCK_STEP_MINUTES = 15;
 export const BREAK_MINUTES = 15; // breathing room between consecutive blocks
@@ -786,6 +790,50 @@ export function classMeetings(schedule, dayKey) {
   return out.sort((a, b) => a.start - b.start || a.c.localeCompare(b.c));
 }
 
+/**
+ * The busy spans an external calendar's meetings occupy, as
+ * `{day, start, end}` with minute-of-day bounds in the pipeline zone.
+ *
+ * `meetings` is `payload.meetings[]` - what the inbound calendar route wrote to
+ * `data/gcal-items.json` and `render.mjs` carried through. Two kinds are
+ * deliberately NOT busy:
+ *
+ *   `free: true`  the source calendar marked the event transparent - the user
+ *                 said "available" themselves. The page still draws it.
+ *   `ad: true`    an all-day event. A conference day is not four blank hours,
+ *                 it is a label on the day, and the human decides what it
+ *                 costs. Treating it as busy would delete every study block on
+ *                 it, which is exactly wrong for "reading day".
+ *
+ * A meeting that crosses local midnight is busy on BOTH days, clipped at the
+ * boundary, because the packer works one day at a time and an interval running
+ * past 24:00 would simply be ignored on the far side. PURE.
+ */
+export function meetingBusySpans(meetings, tz = systemZone()) {
+  const out = [];
+  for (const m of Array.isArray(meetings) ? meetings : []) {
+    if (!m || typeof m !== "object") continue;
+    if (m.ad === true || m.free === true) continue;
+    const startMs = Date.parse(m.s);
+    const endMs = Date.parse(m.e);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    const startDay = localDayKey(startMs, tz);
+    const startMin = localMinuteOfDay(startMs, tz);
+    if (startDay === null || startMin === null) continue;
+    const endDay = localDayKey(endMs, tz);
+    const endMin = localMinuteOfDay(endMs, tz);
+    if (endDay === null || endMin === null) continue;
+    const span = Math.min(Math.max(0, dayDiff(startDay, endDay)), MEETING_MAX_DAYS);
+    for (let i = 0; i <= span; i++) {
+      const day = addDays(startDay, i);
+      const from = i === 0 ? startMin : 0;
+      const to = i === span ? endMin : MINUTES_PER_DAY;
+      if (to > from) out.push({ day, start: from, end: to });
+    }
+  }
+  return out;
+}
+
 /** Total minutes of study this day may be filled with. */
 function dayBudget(weekend, studyMinutes, tune = BASE_TUNING) {
   const given = weekend ? studyMinutes?.weekend : studyMinutes?.weekday;
@@ -1218,6 +1266,11 @@ export function closedSessionBuckets(completions, dayKey) {
  *                               DEFAULT_TUNING (see resolveTuning)
  * @param {string}   o.wakeTime  config.wakeTime "HH:MM" - hard floor for every start
  * @param {object}   o.schedule  config.schedule; attend:true meetings are busy time
+ * @param {Array}    o.meetings  payload.meetings[] - the user's own external
+ *                               calendar (data/gcal-items.json, via
+ *                               render.mjs). Every TIMED meeting that is not
+ *                               marked `free` is busy time; all-day ones are
+ *                               not. Absent or empty changes nothing.
  * @param {Array}    o.board     data/board-items.json board[] (open side-project work)
  * @param {string}   o.sideBucket  config.sideProject.label - the bucket name
  * @param {object}   o.sideProject config.sideProject {minDailyMinutes, maxDailyMinutes}
@@ -1249,6 +1302,7 @@ export function computeFocus({
   tuning = null,
   wakeTime = null,
   schedule = null,
+  meetings = [],
   board = [],
   sideBucket = DEFAULT_SIDE_BUCKET,
   sideProject = null,
@@ -1324,6 +1378,20 @@ export function computeFocus({
       if (meeting.attend) busy[i].push([meeting.start, meeting.end]);
     }
   });
+
+  // A meeting on the user's own calendar is a commitment they made in another
+  // app, and it is busy time here for exactly the same reason an attended
+  // lecture is: they will not be at their desk. It goes into the SAME `busy[i]`
+  // array as the timetable, which is the whole trick - every packing path below
+  // (the first pack, the re-pack around kept and pinned blocks, and the
+  // side-project band) reads that one array, so there is no fourth place to
+  // forget. All-day and `free` meetings are excluded by meetingBusySpans
+  // itself; see its header for why. An absent or empty `meetings` reproduces
+  // the previous behaviour exactly.
+  for (const span of meetingBusySpans(meetings, tz)) {
+    const di = dayIndex.get(span.day);
+    if (di !== undefined) busy[di].push([span.start, span.end]);
+  }
 
   // CLOSED work never generates a block (PART 5). `completions` may be the
   // effective map render.mjs passes, or the raw store itself - resolveMarks

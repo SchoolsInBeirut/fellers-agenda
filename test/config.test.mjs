@@ -196,6 +196,89 @@ test("an explicit null namespace means 'unset' and falls back to the default", (
 });
 
 // ---------------------------------------------------------------------------
+// calendars.gcal - the inbound calendar block
+//
+// Every value here reaches a different subsystem: `enabled` is the ONLY switch
+// the render reads, `feed` becomes the prefix of every meeting key on the wire,
+// and `maxEvents` bounds a file. A wrong type in any of them used to load
+// silently and then behave as though the key had been left out.
+// ---------------------------------------------------------------------------
+
+const gcalConfig = (gcal) => ({ timezone: "UTC", calendars: { gcal } });
+
+/** Every value that must be refused, with the key the error has to name. */
+const badGcal = [
+  [{ enabled: "true" }, "calendars.gcal.enabled", "a string is not a boolean, and a truthy one reads as ON"],
+  [{ enabled: 1 }, "calendars.gcal.enabled", "nor is a number"],
+  [{ feed: "Work Calendar" }, "calendars.gcal.feed", "a feed id is [a-z0-9-]{1,24}"],
+  [{ feed: "" }, "calendars.gcal.feed", "and it cannot be empty"],
+  [{ feed: "x".repeat(25) }, "calendars.gcal.feed", "nor longer than 24"],
+  [{ feed: 7 }, "calendars.gcal.feed", "nor a number"],
+  [{ maxEvents: 0 }, "calendars.gcal.maxEvents", "zero events is not a cap, it is an outage"],
+  [{ maxEvents: -1 }, "calendars.gcal.maxEvents", "negative is nonsense"],
+  [{ maxEvents: 1.5 }, "calendars.gcal.maxEvents", "a count is a whole number"],
+  [{ maxEvents: 999999 }, "calendars.gcal.maxEvents", "past the ceiling is a typo, not an ambition"],
+  [{ label: "y".repeat(25) }, "calendars.gcal.label", "the page has a column, not a paragraph"],
+  [{ label: 7 }, "calendars.gcal.label", "and it is text"],
+  [{ skipUidSuffix: 7 }, "calendars.gcal.skipUidSuffix", "the loop guard is text or null"],
+  [{ skipDescriptionMarker: [] }, "calendars.gcal.skipDescriptionMarker", "so is the other one"],
+];
+
+test("every calendars.gcal value is checked, and the error names the key", () => {
+  for (const [gcal, key, why] of badGcal) {
+    const { dir, path } = withConfig(gcalConfig(gcal));
+    assert.throws(() => loadConfig(path, quiet), (e) => e instanceof ConfigError && e.key === key, `${JSON.stringify(gcal)}: ${why}`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a feed id may not be "fb": that is the session key space', () => {
+  // A meeting key is `<feed>|<uid>|<start>` and a session key is
+  // `fb|<day>|<bucket>`. Nothing downstream re-checks which it is holding, so
+  // the two key spaces are kept apart HERE, by refusing the prefix.
+  const { dir, path } = withConfig(gcalConfig({ feed: "fb" }));
+  assert.throws(
+    () => loadConfig(path, quiet),
+    (e) => e instanceof ConfigError && e.key === "calendars.gcal.feed" && /reserved/.test(e.message) && /session/.test(e.message),
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a complete, legal calendars.gcal block loads unchanged", () => {
+  const gcal = { enabled: true, calendarId: "primary", feed: "work-2", label: "Work", maxEvents: 50, skipUidSuffix: "", skipDescriptionMarker: "x" };
+  const { dir, path } = withConfig(gcalConfig(gcal));
+  assert.deepEqual(loadConfig(path, quiet).calendars.gcal, gcal);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an absent calendars block is dormant, not an error", () => {
+  const { dir, path } = withConfig({ timezone: "UTC" });
+  assert.equal(loadConfig(path, quiet).calendars.gcal.enabled, false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unknown key under calendars.gcal warns, the way an unknown top-level key does", () => {
+  const { dir, path } = withConfig(gcalConfig({ enabled: true, calenderId: "primary" }));
+  const warnings = [];
+  assert.equal(loadConfig(path, { warn: (m) => warnings.push(m) }).calendars.gcal.enabled, true);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /calendars\.gcal/);
+  assert.match(warnings[0], /calenderId/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("calendars, and gcal inside it, must be objects", () => {
+  for (const [raw, key] of [
+    [{ timezone: "UTC", calendars: true }, "calendars"],
+    [{ timezone: "UTC", calendars: { gcal: "on" } }, "calendars.gcal"],
+  ]) {
+    const { dir, path } = withConfig(raw);
+    assert.throws(() => loadConfig(path, quiet), (e) => e instanceof ConfigError && e.key === key);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // derive() - the names nothing else may rebuild
 // ---------------------------------------------------------------------------
 

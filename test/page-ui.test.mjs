@@ -1414,3 +1414,355 @@ test("v5.2: an overlay reloaded from storage is re-validated, and pushed once", 
   await b.win.pushAddsOnLoad();
   assert.equal(drive.created.length, 1, "and exactly once");
 });
+
+/* ================================= meetings from the user's own calendar ====
+ *
+ * The page draws three things out of payload.meetings[] and each one is a
+ * different placement: a timed meeting is a band in the day column, an all-day
+ * one is a chip in the day head, and the ones on today are rows in the plan.
+ * All three are jsdom assertions - jsdom has no layout, so what is pinned here
+ * is the MARKUP the renderers produce and the classes that carry the design,
+ * never the pixels.
+ */
+
+const MEET_NOW = Date.parse("2026-09-02T14:00:00.000Z"); // 10:00 in New York
+
+function meetingPayload(meetings) {
+  return Object.assign({}, SAMPLE, {
+    scrapedAt: "2026-09-02T12:00:00.000Z",
+    focus: [{ d: "2026-09-02", blocks: [{ c: "MATH 210", what: "Problem Set 4", why: "due Friday", t: "13:00", mins: 60 }] }],
+    meetings: meetings
+  });
+}
+
+/* The page reads the real clock, so it is pinned the way the grid tests pin it. */
+async function bootWithClock(payload, cfg, nowMs) {
+  const JSDOM = await loadJsdom();
+  if (!JSDOM) return null;
+  const errors = [];
+  const dom = new JSDOM(build(payload, cfg || PAGE_CONFIG), {
+    runScripts: "dangerously",
+    url: "https://example.invalid/agenda",
+    virtualConsole: new (await import("jsdom")).VirtualConsole().on("jsdomError", (e) => errors.push(e)),
+    beforeParse(w) {
+      const Real = w.Date;
+      class Pinned extends Real {
+        constructor(...a) { super(...(a.length ? a : [nowMs])); }
+        static now() { return nowMs; }
+      }
+      w.Date = Pinned;
+    }
+  });
+  await settle();
+  return { dom, doc: dom.window.document, errors };
+}
+
+test("a timed meeting is drawn as a bracketed band on its own day column", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|a|1", feed: "work", lbl: "Work", t: "Sprint planning",
+    s: "2026-09-02T19:00:00.000Z", e: "2026-09-02T20:00:00.000Z",
+    ad: false, loc: "Room 4B", free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  assert.deepEqual(boot.errors.map((e) => e.message), [], "the page threw while booting");
+  const el = boot.doc.querySelector(".tg-col .gmeet");
+  assert.ok(el, "a timed meeting belongs on the canvas");
+  assert.ok(el.querySelector(".gmtag"), "and wears the MTG tag, so the shape is not the only cue");
+  assert.equal(el.querySelector(".gmw").textContent, "Sprint planning");
+  assert.equal(el.querySelector(".gml").textContent, "Work");
+  assert.match(el.getAttribute("aria-label"), /Work meeting, Sprint planning, .*Room 4B/);
+  assert.ok(!el.querySelector("button"), "read-only: the pipeline never writes to a calendar");
+  boot.dom.window.close();
+});
+
+test("a transparent meeting is drawn hollow, and says so to a screen reader", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|a|1", feed: "work", lbl: "Work", t: "Optional talk",
+    s: "2026-09-02T19:00:00.000Z", e: "2026-09-02T20:00:00.000Z",
+    ad: false, loc: null, free: true, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  const el = boot.doc.querySelector(".tg-col .gmeet");
+  assert.ok(el.classList.contains("free"));
+  assert.match(el.getAttribute("aria-label"), /not holding the time/);
+  boot.dom.window.close();
+});
+
+test("an all-day meeting stands in the day HEAD, not as a full-height bar", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|ad|1", feed: "work", lbl: "Work", t: "Team offsite",
+    s: "2026-09-02", e: "2026-09-05", ad: true, loc: null, free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  assert.equal(boot.doc.querySelectorAll(".tg-col .gmeet").length, 0, "an all-day event has no clock slot");
+  const chips = boot.doc.querySelectorAll(".tg-dh .admtg");
+  assert.equal(chips.length, 3, "one chip per day the run covers");
+  assert.match(chips[0].getAttribute("aria-label"), /All day, Work, Team offsite \(day 1 of 3\)/);
+  assert.ok(chips[1].classList.contains("cont"), "the middle of a run reads as a continuation");
+  boot.dom.window.close();
+});
+
+test("a meeting crossing midnight is torn at the wall into a head and a tail", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|late|1", feed: "work", lbl: "Work", t: "Overnight cutover",
+    s: "2026-09-03T02:00:00.000Z", e: "2026-09-03T05:30:00.000Z",
+    ad: false, loc: null, free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  const segs = boot.doc.querySelectorAll(".tg-col .gmeet");
+  assert.equal(segs.length, 2, "one entry per day column it occupies");
+  assert.ok(segs[0].classList.contains("seg-head"));
+  assert.ok(segs[1].classList.contains("seg-tail"));
+  assert.match(segs[0].getAttribute("aria-label"), /runs past midnight/);
+  boot.dom.window.close();
+});
+
+test("a meeting on today sits in the plan, in clock order with the study blocks", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|a|1", feed: "work", lbl: "Work", t: "Sprint planning",
+    s: "2026-09-02T15:00:00.000Z", e: "2026-09-02T16:00:00.000Z",
+    ad: false, loc: "Room 4B", free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  const rows = [...boot.doc.querySelectorAll(".hero-rows .hrow")];
+  assert.ok(rows.length >= 2, "the plan has both the meeting and the study block");
+  assert.ok(rows[0].classList.contains("gmrow"), "11:00 comes before 13:00");
+  assert.equal(rows[0].querySelector(".hcm").textContent, "meeting");
+  assert.equal(rows[0].querySelector(".hw").textContent, "Sprint planning");
+  boot.dom.window.close();
+});
+
+test("an all-day meeting leads the plan and reports no duration it does not have", async (t) => {
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|ad|1", feed: "work", lbl: "Work", t: "Reading day",
+    s: "2026-09-02", e: "2026-09-03", ad: true, loc: null, free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  const first = boot.doc.querySelector(".hero-rows .hrow");
+  assert.ok(first.classList.contains("gmrow"));
+  assert.equal(first.querySelector(".hts").textContent, "all day");
+  assert.equal(first.querySelector(".hmins").textContent, "all day");
+  boot.dom.window.close();
+});
+
+test("a payload with no meetings key renders exactly as it did before", async (t) => {
+  const boot = await bootWithClock(SAMPLE, null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  assert.deepEqual(boot.errors.map((e) => e.message), []);
+  assert.equal(boot.doc.querySelectorAll(".gmeet, .admtg, .gmrow").length, 0);
+  assert.ok(boot.doc.getElementById("app").innerHTML.includes("MATH 210"), "the week still rendered");
+  boot.dom.window.close();
+});
+
+test("a malformed meetings[] costs the meetings and never the page", async (t) => {
+  const boot = await bootWithClock(meetingPayload([
+    null,
+    "nope",
+    { k: "", t: "no key" },
+    { k: "work|bad|1", t: "unreadable", s: "yesterday", e: "tomorrow", ad: false },
+    { k: "work|badad|1", t: "unreadable all day", s: "not-a-day", ad: true }
+  ]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  assert.deepEqual(boot.errors.map((e) => e.message), [], "the page threw on a bad meeting");
+  assert.equal(boot.doc.querySelectorAll(".gmeet, .admtg").length, 0);
+  assert.ok(boot.doc.getElementById("app").innerHTML.includes("MATH 210"));
+  boot.dom.window.close();
+});
+
+test("one key may claim one day column: a duplicated meeting is drawn once", async (t) => {
+  const one = {
+    k: "work|dup|1", feed: "work", lbl: "Work", t: "Sprint planning",
+    s: "2026-09-02T19:00:00.000Z", e: "2026-09-02T20:00:00.000Z",
+    ad: false, loc: null, free: false, url: null
+  };
+  const boot = await bootWithClock(meetingPayload([one, Object.assign({}, one, { t: "A second copy" })]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  assert.equal(boot.doc.querySelectorAll(".tg-col .gmeet").length, 1);
+  boot.dom.window.close();
+});
+
+test("a meeting outside the study window still widens the frame, so it is on screen", async (t) => {
+  /* The frame is trimmed to the hours the week uses. A 07:30 standup is one of
+     those hours: a meeting the grid cannot draw is a meeting the user does not
+     know about. */
+  const boot = await bootWithClock(meetingPayload([{
+    k: "work|early|1", feed: "work", lbl: "Work", t: "Early standup",
+    s: "2026-09-02T11:30:00.000Z", e: "2026-09-02T11:45:00.000Z",
+    ad: false, loc: null, free: false, url: null
+  }]), null, MEET_NOW);
+  if (!boot) return t.skip("jsdom is not installed (it is not a dependency)");
+  const el = boot.doc.querySelector(".tg-col .gmeet");
+  assert.ok(el, "the early meeting is drawn");
+  const top = parseFloat(/top:([\d.]+)%/.exec(el.getAttribute("style"))[1]);
+  assert.ok(top >= 0 && top < 100, `it is inside the frame, not clamped to its edge (top ${top}%)`);
+  assert.ok(el.classList.contains("sm"), "a 15-minute band drops its label rather than overflowing");
+  boot.dom.window.close();
+});
+
+/* ============================== the brief that rides after the envelope ====
+ *
+ * The data document carries the envelope, a blank line, and then a plain-text
+ * brief a phone reads. The page has to stop at the first `.END`: the brief is
+ * prose assembled from strings other people wrote, and a reader that kept going
+ * would be parsing it.
+ */
+
+const BRIEF_TAIL =
+  "\n\n--- BRIEF (plain text for the phone; the blob above is the page's) ---\n" +
+  "Weekly Agenda brief - Wed Sep 2, 2026 10:00 AM EDT\n" +
+  "TODAY'S PLAN\n  16:00-17:00  MATH 210   Problem Set 4 #110002::homework::problem set 4\n" +
+  "DUE IN 48H\n  (none)\n" +
+  "--- END BRIEF ---\n";
+
+test("the page decodes a document that carries a brief under the envelope", async () => {
+  const api = envelopeApi();
+  const v = vectors();
+  const withBrief = v.gzip.text + BRIEF_TAIL;
+  assert.deepEqual(await api.decodePayload(withBrief), v.gzip.json);
+  // and the plain form, which is what an older document still looks like
+  assert.deepEqual(await api.decodePayload(v.plain.text + BRIEF_TAIL), v.plain.json);
+});
+
+test("nothing in the brief is ever parsed, however envelope-shaped it looks", async () => {
+  const api = envelopeApi();
+  const real = Object.assign({}, SAMPLE, { scrapedAt: "2026-09-02T12:00:00.000Z" });
+  const decoy = Object.assign({}, SAMPLE, { scrapedAt: "2026-09-09T12:00:00.000Z" });
+  const doc = packGzip("AGD", real) + "\n\n--- BRIEF ---\n" + packPlain("AGD", decoy) + "\n--- END BRIEF ---\n";
+  const out = await api.decodePayload(doc);
+  assert.equal(out.scrapedAt, real.scrapedAt, "the envelope decided, not the prose under it");
+});
+
+test("an AGD2 that fails validation is REFUSED - it never falls back to anything", async () => {
+  const api = envelopeApi();
+  const v = vectors();
+  /* The failure this matters for: a corrupt compressed document with an older
+     plain envelope sitting further down the same file. Falling back would
+     publish a stale week that looks entirely plausible, which is precisely what
+     the checksum exists to prevent. */
+  const corrupt = v.gzip.text.replace(/^AGD2\.[0-9a-fA-F]{8}\./, "AGD2.00000000.");
+  const doc = corrupt + "\n\n--- BRIEF ---\n" + packPlain("AGD", SAMPLE) + "\n--- END BRIEF ---\n";
+  assert.equal(await api.decodePayload(doc), null);
+  assert.match(api.decodeNote, /unreadable/);
+});
+
+test("a truncated AGD2 says so, rather than half-decoding into a shorter week", async () => {
+  const api = envelopeApi();
+  const v = vectors();
+  assert.equal(await api.decodePayload(v.gzip.text.slice(0, v.gzip.text.length - 40)), null);
+  assert.match(api.decodeNote, /unreadable/);
+});
+
+test("the embedded copy still decodes synchronously, with or without a tail", () => {
+  const api = envelopeApi();
+  const v = vectors();
+  assert.deepEqual(api.decodePayloadSync(v.plain.text), v.plain.json);
+  assert.deepEqual(api.decodePayloadSync(v.plain.text + BRIEF_TAIL), v.plain.json);
+  assert.equal(api.decodePayloadSync("nothing envelope-shaped at all"), null);
+});
+
+/* ================================== nothing on this page names its sources ==
+ *
+ * The page is published once and serves whatever the pipeline was pointed at.
+ * A literal source name is therefore wrong for somebody, always - and it is the
+ * kind of wrong nobody reports, because it reads as a harmless label rather
+ * than as a page telling them to look somewhere they have never been.
+ */
+
+test("no LMS is named anywhere in the template, in code or in prose", () => {
+  /* Shapes rather than one name: the point is that the template does not name a
+     learning-management system at all, whichever one somebody happens to run. */
+  const named = html.match(/\b(Brightspace|D2L|Canvas|Blackboard|Moodle|Gradescope)\b/g) || [];
+  const allowed = new Set(["Gradescope"]); // a `via` label the payload itself carries
+  const banned = named.filter((n) => !allowed.has(n));
+  assert.deepEqual(banned, [], `the template names ${banned.join(", ")}`);
+});
+
+test("the Drive connector's NAME comes from CFG, never from a literal", () => {
+  /* One helper says the three connector sentences, and it is the only place the
+     name appears. `CFG.driveConnector` supplies it; the fallback default at the
+     top of the script is the one literal allowed. */
+  const hits = [...html.matchAll(/"[^"\n]*Google Drive[^"\n]*"/g)].map((m) => m[0]);
+  assert.deepEqual(hits, ['"Google Drive"'],
+    `only the CFG default may spell the connector name: ${hits.join(" | ")}`);
+  assert.match(html, /CFG\.driveConnector = CFG\.driveConnector \|\| "Google Drive";/);
+  assert.match(html, /function connectorMessage\(code\) \{/);
+});
+
+test("a build with another connector name says that name in every write path", async (t) => {
+  const JSDOM = await loadJsdom();
+  if (!JSDOM) return t.skip("jsdom is not installed (it is not a dependency)");
+  const cfg = Object.assign({}, PAGE_CONFIG, { driveConnector: "Files by Example" });
+  const dom = new JSDOM(build(SAMPLE, cfg), { runScripts: "dangerously", url: "https://example.invalid/a" });
+  await settle();
+  const win = dom.window;
+  /* the three sentences, from the three functions that used to spell the name */
+  for (const fn of ["syncMessage", "blkMessage", "addMessage"]) {
+    for (const code of ["needs_reauth", "server_not_connected", "selection_required"]) {
+      const said = win[fn](code);
+      assert.ok(said.includes("Files by Example"), `${fn}(${code}) said: ${said}`);
+      assert.ok(!said.includes("Google Drive"), `${fn}(${code}) still names Google Drive`);
+    }
+    /* and a code that is NOT about the connector keeps that function's own words */
+    assert.ok(!win[fn]("tool_error").includes("Files by Example"));
+  }
+  win.close();
+});
+
+/* ====================================================== the add queue's cap ==
+ *
+ * The overlay is a queue, not a second agenda: it holds what this browser has
+ * asked for and no payload has come back with yet. Without a cap, a sync that
+ * stays broken turns it into an unbounded parallel to-do list living in
+ * localStorage, where nothing downstream will ever see it.
+ */
+
+test("v5.2: the add queue is capped at ADD_MAX, and says so rather than silently dropping", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, doc, errors } = b;
+  const cap = win.ADD_MAX;
+  assert.equal(cap, 50, "the documented number");
+
+  for (let i = 0; i < cap; i++) {
+    addOne(win, { title: `Queued task number ${i}` });
+  }
+  assert.equal(Object.keys(win.adds.ovl).length, cap, "the cap is reached, not passed");
+
+  assert.throws(
+    () => addOne(win, { title: "One too many" }),
+    (e) => e.message === `The add queue is full at ${cap} - let a sync clear it first.`,
+    "the model is told the number, so it can say it back",
+  );
+  assert.equal(Object.keys(win.adds.ovl).length, cap, "and nothing was queued");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2: a full queue still lets a REFUSED entry be replaced", async (t) => {
+  /* The cap counts entries, not attempts. A refused entry is a slot the sync
+     already said no to - replacing it adds nothing to the queue, and refusing
+     the replacement would strand the user at the cap with no way down. */
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, errors } = b;
+  const cap = win.ADD_MAX;
+  for (let i = 0; i < cap; i++) addOne(win, { title: `Queued task number ${i}` });
+
+  const firstKey = Object.keys(win.adds.ovl)[0];
+  win.adds.ovl[firstKey].sync = "refused";
+  const title = win.adds.ovl[firstKey].t;
+  assert.doesNotThrow(() => addOne(win, { title }), "a refused slot may be re-used");
+  assert.equal(Object.keys(win.adds.ovl).length, cap, "and the queue is no bigger for it");
+  assert.deepEqual(errors, []);
+});
+
+test("v5.2: the cap is on the queue, not on what a payload may carry back", async (t) => {
+  const b = await bootAdd(t);
+  if (!b) return t.skip("jsdom is not installed (it is not a dependency)");
+  const { win, errors } = b;
+  for (let i = 0; i < win.ADD_MAX; i++) addOne(win, { title: `Queued task number ${i}` });
+  /* mergeAdds walks the overlay under the same bound - a stored overlay from an
+     older build cannot make the grid grow without limit either */
+  const drawn = win.state.data.items.filter((it) => it.pending).length;
+  assert.ok(drawn <= win.ADD_MAX, `${drawn} pending items drawn`);
+  assert.deepEqual(errors, []);
+});

@@ -107,7 +107,7 @@ import {
 } from "./focus-engine.mjs";
 import { loadConfig, standardsCourse } from "./lib/config.mjs";
 import { configPath, dataDir as resolveDataDir, repoRoot } from "./lib/paths.mjs";
-import { EnvelopeError, unpack } from "./lib/envelope.mjs";
+import { EnvelopeError, sliceEnvelope, unpack } from "./lib/envelope.mjs";
 
 // --------------------------------------------------------------- constants
 
@@ -577,7 +577,12 @@ function readJson(file, fallback, warnings, label) {
 export function doneFromPayload(text) {
   if (typeof text !== "string" || !text.trim()) return [];
   try {
-    const { kind, data } = unpack(text);
+    // The document carries a plain-text brief after the envelope (src/brief.mjs).
+    // Everything past the first `.END` is prose for a phone and is never parsed:
+    // `sliceEnvelope` is the one place that boundary is drawn. An `AGD2.` that
+    // then fails validation is still a hard refusal - the fallback is an empty
+    // ledger, never a looser parse.
+    const { kind, data } = unpack(sliceEnvelope(text));
     if (kind !== "data") return [];
     return Array.isArray(data?.done) ? data.done : [];
   } catch (e) {

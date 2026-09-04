@@ -125,6 +125,39 @@ from `data/study-model.json`. Non-fatal: on a non-zero exit log
 
 ## 4. Render + rotate the Drive payload
 
+### 4.0 Inbound calendar — before the render
+
+*Only when `calendars.gcal.enabled` is `true`. Absent or `false` -> skip
+silently and log nothing. The script reads the same key and is a no-op without
+it, but the connector call in front of it is not, so check the key.*
+
+The same step the heavy run does, with the same rules, and it belongs here for
+the same reason: a light run re-renders the week, and re-rendering it against a
+calendar from this morning would plan study over an afternoon the user gave away
+at lunchtime. It is not a scrape — it is one connector call and one local
+script, which is why it is the one fetch this run is allowed.
+
+1. Call the calendar connector's list-events tool with `calendarId` =
+   `calendars.gcal.calendarId`, `startTime` = yesterday 00:00 local (ISO with an
+   offset), `endTime` = today + 21 days 23:59 local, `orderBy` = `startTime`,
+   `pageSize` = `250`, `timeZone` = `config.timezone`, paging with `pageToken`.
+2. Save the result VERBATIM to `data/tmp/gcal-raw.json` — one object, every
+   page's `events` concatenated in order — then run
+   `node src/connectors/gcal-ingest.mjs --in data/tmp/gcal-raw.json` and delete
+   the temp file.
+3. Exit 0 -> `gcal=ok(<final summary line>)`, unless the last line reads
+   `[gcal-ingest] skipped=disabled`, which is `gcal=SKIPPED(disabled)` and means
+   this step should not have run. Exit 3 -> `gcal=PARTIAL(<final summary line>)`.
+   Exit 1 -> `gcal=FAILED(<last line>)`. Connector missing or unauthorized ->
+   `gcal=SKIPPED(connector-unauthorized)` and **do NOT call `authenticate`.**
+
+**Every outcome continues to the render.** Never fail a run over the calendar,
+never write to a calendar (list and get only), and never log an event body, a
+location, an attendee or a calendar address. `runbooks/heavy-run.md` section 7.0
+is the full version of this step and the two must not drift.
+
+### 4.1 The render
+
 ```
 node src/render.mjs
 ```
@@ -140,16 +173,28 @@ slightly older data.
 
 On a clean render, rotate the payload doc:
 
-1. **Read `data/payload.b64.txt`.** It is one line, roughly 7,000 characters — if
-   it is dramatically larger, stop and log `drive=SKIPPED(oversize)`; do not
-   attempt the upload. The copy embedded in the HTML is always complete, so the
-   page still works.
+The file has two halves and you upload BOTH: the envelope line the page reads,
+one blank line, and a plain-text brief a phone reads. Every machine reader stops
+at the first `.END`.
+
+1. **Read `data/payload.b64.txt`.** The envelope is roughly 7,000 characters
+   and the brief adds **about 6 KB** at the very most — 60 lines of at most 100
+   columns and their newlines, 6,059 characters, plus the blank line between the
+   two halves. If the file is dramatically larger than that, stop and log
+   `drive=SKIPPED(oversize)`; do not attempt the upload. The copy embedded in
+   the HTML is always complete, so the page still works.
 2. `create_file` — title `<ns>-data`, `contentMimeType` `text/plain`,
-   `textContent` = **that exact line, copied character for character. Do not
-   reformat, wrap, or summarise it.**
-3. `search_files` with `title = '<ns>-data' and owner = 'me'`, then `trash_file`
-   every result **except the one you just created, matched by id.**
-4. Log `drive=OK(<chars>)`.
+   `textContent` = **the ENTIRE file, copied character for character, brief
+   included. Do not reformat, wrap, or summarise any of it.**
+3. **Read the new document back before trashing anything.** `read_file_content`
+   on the id you just created: it must start with `AGD2.`, contain `.END`, and
+   be within 1% of the file's own character count. If any of those fails,
+   `trash_file` ONLY that new document, log
+   `drive=FAILED(corrupt-upload;kept-previous-doc)`, and trash nothing else.
+4. **Only once the read-back passes**, `search_files` with
+   `title = '<ns>-data' and owner = 'me'`, then `trash_file` every result
+   **except the one you just created, matched by id.**
+5. Log `drive=ok(<KB>)`.
 
 **Create first, trash second, always in that order.** If the create fails, log
 `drive=FAILED(<reason>)` and trash **nothing**, so the page keeps reading the doc
@@ -158,7 +203,8 @@ that is already there. Never trash anything with a different title.
 **Do NOT publish or republish the artifact.** The published page at
 `config.artifact.url` reads the Drive doc by itself.
 
-**Token:** `render=ok drive=OK(<chars>)`, or the `FAILED` / `SKIPPED` forms above.
+**Token:** `gcal=* render=ok drive=ok(<KB>)`, or the `FAILED` / `SKIPPED`
+forms above. The `gcal=` token is absent when the inbound calendar is off.
 
 ---
 
@@ -248,7 +294,7 @@ token `SYNC` so these lines are greppable (`^SYNC`) and so anything reading the
 heavy runs' timestamp-first lines is unaffected:
 
 ```
-SYNC 2026-09-02T15:00:00Z run=sync cmd=applied=1 completions=merged(2-new,1-doc) studymodel=ok render=ok drive=OK(6712) calendar=ok(created=0 updated=1 deleted=0 unchanged=21 skipped=0 errors=0) behind=ok(level=clear) deadman=armed push=0
+SYNC 2026-09-02T15:00:00Z run=sync cmd=applied=1 completions=merged(2-new,1-doc) studymodel=ok render=ok drive=ok(7KB) calendar=ok(created=0 updated=1 deleted=0 unchanged=21 skipped=0 errors=0) behind=ok(level=clear) deadman=armed push=0
 ```
 
 Include every token this run produced, **in step order**, and always finish with
@@ -269,7 +315,11 @@ one more thing".
 - **Never scrape.** No `scrape.mjs`, no LMS MCP tool, no mail sweep, no board
   sync, no materials download, no announcement fetch. Those cost minutes and
   belong to the heavy runs. **If the data on disk is stale, the render ships it
-  stale and the next heavy run fixes it.**
+  stale and the next heavy run fixes it.** The single exception is step 4.0, the
+  inbound calendar: one connector call, no login, no minutes, and the render
+  immediately behind it is wrong without it.
+- **The inbound calendar is read-only.** List and get only — never create,
+  update, delete, move or respond to an event, and never call `authenticate`.
 - **Never modify code or configuration.** Not `src/render.mjs`,
   `src/study-model.mjs`, `src/behind.mjs`, `src/command-ingest.mjs`,
   `src/deadman.mjs`, `web/page-template.html`, either runbook, or `config.json`.
@@ -298,7 +348,8 @@ one more thing".
 - **Only these files may be written:** `data/user-completions.json` (only via
   `--ingest`, step 2), `data/study-model.json` (only via `--refresh`),
   `data/payload.b64.txt`, `data/focus-plan.json` and `agenda.html` (only via
-  `render.mjs`), `data/calendar-map.json` (only via the calendar sink), whatever
+  `render.mjs`), `data/gcal-items.json` (only via `gcal-ingest.mjs`),
+  `data/calendar-map.json` (only via the calendar sink), whatever
   `command-ingest.mjs` writes itself (`data/overrides.json`,
   `data/phone-items.json`, `data/snooze.json`, `data/block-edits.json`,
   `data/command-log.json`), whatever `deadman.mjs` writes, `data/runlog.txt`, and

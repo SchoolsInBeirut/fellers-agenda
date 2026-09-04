@@ -3,7 +3,7 @@
 **Start here:**
 
 ```
-node scripts/validate-setup.mjs
+npm run doctor          # = node scripts/validate-setup.mjs
 ```
 
 It prints a fix link for every failure, never throws, and **touches no network**.
@@ -11,7 +11,7 @@ It prints a fix link for every failure, never throws, and **touches no network**
 When the machine looks fine but a source does not, ask the sources themselves:
 
 ```
-node scripts/health-check.mjs
+npm run health          # = node scripts/health-check.mjs
 ```
 
 That runs every **enabled** connector's own liveness probe — is the session
@@ -47,7 +47,12 @@ again — a fresh `PATH` needs a fresh shell.
 | `/agenda-doctor` reports failures right after you started setup | **A half-finished `config.json` makes the preflight stricter, on purpose** | Not a fault. Say `hey` and finish setup; the failures go with it |
 | A command exits with `ConfigError: config: "<key>" is not set yet` and a stack trace | Exactly what it says — that key has no value, and the module needed it | The first line is the real message; the stack below it is noise. Say `hey` to finish setup, or set the key by hand — `docs/CONFIG.md` documents every one |
 | `npm test` or `node --test` fails with `MODULE_NOT_FOUND` on `test` | You ran `node --test test/`. Node's handling of a bare directory argument has changed between releases | Use `npm test`, which runs `node --test test/*.test.mjs` — the form CI uses on every supported version |
-| You want to start completely over | — | `node scripts/reset.mjs` lists what it would remove and removes nothing; `node scripts/reset.mjs --yes` does it. Same command on every OS, and it never touches `backups/`. `docs/SETUP.md` → "Starting over" has the rest. Or just ask: *"reset my setup"* |
+| You want to start completely over | — | `node scripts/reset.mjs` (or `npm run setup -- --reset`) lists what it would remove and removes nothing; `node scripts/reset.mjs --yes` does it. Same command on every OS, and it never touches `backups/`. `docs/SETUP.md` → "Starting over" has the rest. Or just ask: *"reset my setup"* |
+| `npm run setup` finished, but the preflight still FAILs on **"Your courses"** | **Correct, and the point.** The wizard cannot call `get_my_courses` on your account, so it hands over rather than inventing a course list | Open the folder in Claude Code and say `hey`. The setup agent resumes at Step 6. `docs/SETUP.md` → "Fast path" has the step-by-step map of what the wizard did and did not do |
+| `npm run setup` says *"there is no terminal here to ask questions in"* and exits 2 | It was started somewhere with no TTY — a CI job, a pipe, an agent tool call | Add `--yes` to take the safe defaults, which never starts a login and never installs a scheduled task. Or run it in a real terminal |
+| `npm run setup` says *"unknown flag"* and nothing ran | Deliberate. A typo that silently selects the default is how you end up believing you skipped a step you did not skip | Check the spelling against `npm run setup -- --help`. Nothing was written |
+| You ran `npm run setup` and now Claude Code greets you normally instead of starting setup | Working as intended: the wizard filled `CLAUDE.md` Part 2, which is the setup agent's trigger | The remaining work is named in that block — **Courses** says *"not chosen yet"*. Say `hey` anyway and ask it to finish setup, or run `npm run setup -- --agent` to put the sentinels back |
+| A flag like `--yes` reaches npm instead of the wizard | `npm run setup --yes` passes the flag to **npm**. `npm run setup -- --yes` passes it through | Use the `--` form, or call the script directly: `node scripts/setup.mjs --yes` |
 
 ---
 
@@ -114,6 +119,13 @@ its failures are in the next table.
 | A Canvas course shows far fewer assignments than Canvas does | Canvas paginates at 10 per page and the link header is the only signal there is more | The connector follows `Link: rel="next"`. If you still see a short list, that is a bug worth an issue |
 | `board=SKIPPED(gh not authenticated)` | The GitHub CLI is installed but not logged in | `gh auth login`, **in your own terminal** — it is an interactive wizard (protocol choice, then an eight-character code to paste into github.com) and an agent running it will hang. Until then the board is empty and the run continues normally. **Never fix `gh` auth from a scheduled run** |
 | `board=SKIPPED(...scopes...)` | `gh` needs `repo` and `read:org` for your organisation | `gh auth refresh -s repo,read:org` — also interactive, also yours to type |
+| `gcal=SKIPPED(connector-unauthorized)` | The run could not see a calendar connector, or the one it saw is not authorized for this account | Authorize the calendar connector in **your own** Claude account, once, in your own browser. A scheduled run must never do this and must never call `authenticate` - it cannot answer a consent screen. Until then the agenda renders with no meetings and everything else works |
+| `gcal=PARTIAL(...)` and the page still shows yesterday's meetings | The fetch failed and the previous run's events are standing in. They stay for 48 hours, then the file honestly reports none | Nothing, if it happens once. If it repeats, the connector has probably lost its authorization - re-authorize it. `data/gcal-items.json` -> `feeds[0].error` says what the failure was |
+| `gcal=FAILED(... is not a calendar listing - top-level keys: detail, error)` | The connector answered with something that is not a list of events - almost always an auth or quota error body | Read the connector's own status in your Claude account. The run deliberately prints only the key NAMES, because the values are your calendar |
+| `calendar: meeting data is 40h old` on the page's error strip | `data/gcal-items.json` has not been refreshed for a day and a half - the inbound step is not running, or is failing every time | Check the last few `gcal=` tokens in `data/runlog.txt`. A lane that has silently stopped looks exactly like a calendar with nothing on it, which is why the page says the age out loud |
+| A meeting you can see in your calendar is missing from the agenda | Three legitimate causes, in order of likelihood: it is outside the window (yesterday to +21 days); it was skipped as one of the agenda's own events; or it is a recurring **master** the connector did not expand | `node src/connectors/gcal-ingest.mjs --in <the saved file> --dry-run` prints one warning per skipped event. `feeds[0].skippedOwn` counts the loop-guard skips; see "The loop guard" in `docs/CONFIG.md` |
+| A real meeting vanished and `skippedOwn` counts it | Its description quotes the agenda's own marker, so the heuristic loop guard fired on a genuine event | The run warns about exactly this case (`N event(s) skipped by description marker only`). Change `calendars.gcal.skipDescriptionMarker` to something your colleagues will not paste, or set it to `""` and rely on the UID rule alone |
+| The planner booked study straight through a meeting | Either that meeting is marked **free**/transparent on your calendar, or it is an **all-day** event | Both are deliberate. A transparent event is you saying you are available; an all-day event is a label on the day, not four blank hours, and treating it as busy would delete every study block on a reading day. Mark it busy on the source calendar if you meant it |
 | Outlook connector reports COM unavailable | Classic Outlook is not running or not installed | It is **optional**. Set `connectors.mail.outlook.enabled: false` and everything else works. The mail panel hides itself |
 | Python or Gradescope import errors | The optional grades extra is enabled and its Python dependency is missing | It ships **off**. Either disable it, or install `extras/gradescope/requirements.txt`. Read `extras/gradescope/README.md` first |
 | `grades: <code> went 12 -> 0 assignments` | The **empty-result canary.** The service answered, but a course that had work last run came back empty, so the adapter refused to pass that off as "nothing is due" | Working as designed. Mention it once; **do not retry in a loop.** It usually means the service changed its page or the session drifted |
@@ -165,7 +177,7 @@ its failures are in the next table.
    is a bug in this repo and worth an issue on its own.
 5. Open an issue with `.github/ISSUE_TEMPLATE/bug_report.yml`. **Redact first:**
    no emails, no course names, no document ids, no tokens, no
-   `C:\Users\<your name>` paths. The status tokens (`drive=OK(6712)`,
+   `C:\Users\<your name>` paths. The status tokens (`drive=ok(7KB)`,
    `behind=notice(B3)`, `cmd=REFUSED`) are what a maintainer needs and they carry
    nothing private. A `data/auth-probe.json` from `node scripts/reauth.mjs
    --probe` is also safe to attach — it holds no credentials.

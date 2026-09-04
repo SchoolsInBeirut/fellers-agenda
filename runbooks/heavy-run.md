@@ -1046,6 +1046,97 @@ header, and changing it is a code change, not a run-time judgement call.
 
 ## 7. Render + push to Drive
 
+### 7.0 Inbound calendar — before the render
+
+*Only when `calendars.gcal.enabled` is `true` in `config.json`. If it is absent
+or `false`, skip this step silently and log nothing. The script reads the same
+key, so a step that fires anyway writes nothing and exits 0 — but the fetch it
+would have done first is a connector call nobody asked for, so check the key.*
+
+The user's own meetings are fixed commitments, and the planner needs them before
+it packs a single hour: an afternoon already spoken for is not an afternoon of
+study. This pipeline holds no calendar credentials, so **you** fetch the events
+with the calendar connector the user authorized in their own Claude account, and
+a script decides what they mean.
+
+**You copy bytes. The script decides.**
+
+1. **Call the calendar connector's list-events tool.** Arguments:
+
+   | Argument | Value |
+   |---|---|
+   | `calendarId` | `calendars.gcal.calendarId` (usually `primary`, or the calendar's address) |
+   | `startTime` | yesterday, 00:00 local, as ISO **with an offset** |
+   | `endTime` | today + 21 days, 23:59 local, as ISO with an offset |
+   | `orderBy` | `startTime` |
+   | `pageSize` | `250` |
+   | `pageToken` | the previous page's `nextPageToken`, when there is one |
+   | `timeZone` | `config.timezone` |
+
+   The result is one object: `{accessRole, defaultReminders, events, summary,
+   timeZone, updated}`. It returns **single instances**, already expanded — so
+   there is nothing to ask for beyond the arguments above.
+
+2. **Save the result VERBATIM** to `data/tmp/gcal-raw.json` with the Write tool.
+   The whole JSON text, character for character. Do not reformat it, do not trim
+   it, do not summarise it, and do not "fix" anything in it. **If you paged,
+   write ONE object whose `events` array is every page concatenated in order** —
+   never one file per page and never an array of pages.
+
+3. **Run the ingest:**
+
+   ```
+   node src/connectors/gcal-ingest.mjs --in data/tmp/gcal-raw.json
+   ```
+
+   Add `--feed <id> --label <Label>` only if `config.json` does not already name
+   them. Then delete `data/tmp/gcal-raw.json` — it is a raw calendar dump and it
+   has no business surviving the step that needed it.
+
+4. **Map the exit code:**
+
+   | Exit | Last line | Log |
+   |---|---|---|
+   | 0 | `[gcal-ingest] feed=...` | `gcal=ok(<the final summary line>)` |
+   | 0 | `[gcal-ingest] skipped=disabled ...` | `gcal=SKIPPED(disabled)` — `calendars.gcal.enabled` is not `true`, so nothing was read and nothing was written. This step should not have run; say so in the digest |
+   | 3 | `[gcal-ingest] feed=...` | `gcal=PARTIAL(<the final summary line>)` — the fetch failed; the previous run's meetings are standing in, or the file now honestly says there are none |
+   | 1 | (an `error:` line on stderr) | `gcal=FAILED(<last line>)` — the payload was not a calendar listing, a feed id was refused, or the output could not be written |
+
+   The final summary line is always the last thing the script prints:
+
+   ```
+   [gcal-ingest] feed=calendar source=connector events=7 skippedOwn=8 warnings=0 window=2026-09-02..2026-09-24
+   ```
+
+   **Never fail a run over the calendar.** Every one of these outcomes continues
+   to the render; a missing meeting costs one badly-placed study block, and a
+   halted run costs the whole day.
+
+5. **If the connector tool is missing or unauthorized: do NOT call
+   `authenticate`, and do not try another route.** Log
+   `gcal=SKIPPED(connector-unauthorized)` and continue. A scheduled run cannot
+   answer a consent screen, and a run that opens one leaves a browser window
+   waiting on a person who is asleep. Say it in the digest instead — the user
+   re-authorizes the connector themselves, once, in their own Claude account.
+
+**Rules for this step, all of them one-directional:**
+
+- **The pipeline never writes to a calendar.** Use the connector's **list** and
+  **get** tools only. Never create, update, delete, move or respond to an event,
+  and never call `authenticate`.
+- **Never log an event body, a location, an attendee or a calendar address.**
+  The ingest is built so that its own output cannot carry them; do not put them
+  in the digest either.
+- **Never edit `data/gcal-items.json` by hand.** It is written by
+  `gcal-ingest.mjs` and by nothing else. If it looks wrong, say so and name the
+  file.
+- The step runs **before** `node src/render.mjs`, always. Running it after would
+  publish a week planned against yesterday's calendar.
+
+---
+
+### 7.1 The render
+
 `data/study-model.json` must already have been refreshed this run (6.4). If 6 was
 skipped for any reason, run `node src/study-model.mjs --refresh` now, and render
 anyway if it fails.
@@ -1069,19 +1160,44 @@ truncate**. In that case log `drive=SKIPPED(oversize)` and do not attempt the
 upload — the copy embedded in the HTML is always complete, so the page still
 works.
 
-### 7.1 The payload doc (`<ns>-data`)
+### 7.2 The payload doc (`<ns>-data`)
 
-1. **Read `data/payload.b64.txt`.** It is one line, roughly 7,000 characters — if
-   it is dramatically larger, stop and log `drive=SKIPPED(oversize)`; do not
-   attempt the upload.
+**The file has two halves and you upload BOTH.** The envelope line the page
+reads, one blank line, and a plain-text brief a phone reads (`src/brief.mjs`,
+`docs/PHONE.md`). Every machine reader stops at the first `.END`, so the brief
+costs the page nothing — but a run that uploads only the first line leaves the
+user's phone reading last week.
+
+1. **Read `data/payload.b64.txt`.** The envelope line is roughly 7,000
+   characters and the brief adds **about 6 KB** at the very most — 60 lines of
+   at most 100 columns and their newlines, 6,059 characters, plus the blank line
+   between the two halves. If the file is dramatically larger than that, stop
+   and log `drive=SKIPPED(oversize)`; do not attempt the upload.
 2. `create_file` — title `<ns>-data`, `contentMimeType` `text/plain`,
-   `textContent` = **that exact line, copied character for character. Do not
-   reformat, wrap, or summarise it.**
-3. `search_files` with `title = '<ns>-data' and owner = 'me'`, then `trash_file`
-   every result **except the one you just created, matched by id.** Never trash a
+   `textContent` = **the ENTIRE file, copied character for character, brief
+   included. Do not reformat, wrap, re-indent, or summarise any of it.**
+3. **Read the new document back and check it before you trash anything.**
+   `read_file_content` on the id `create_file` just returned, and confirm all
+   three:
+
+   - it starts with `AGD2.`;
+   - it contains `.END`;
+   - its character count is within **1%** of the file's own
+     (`wc -m data/payload.b64.txt` — or count the string you just sent).
+
+   **If any of the three fails, `trash_file` ONLY that new document, log
+   `drive=FAILED(corrupt-upload;kept-previous-doc)`, and trash nothing else.**
+   A truncated upload is the realistic failure here — a model typed those bytes
+   — and a truncated gzip stream still starts decompressing, so a document that
+   lost its tail can parse into a shorter, entirely plausible week. The
+   checksum catches it on the page; this check catches it before the page ever
+   sees it, while the previous good document is still there to fall back to.
+4. **Only once the read-back passes**, `search_files` with
+   `title = '<ns>-data' and owner = 'me'`, then `trash_file` every result
+   **except the one you just created, matched by id.** Never trash a
    `<ns>-completions` or `<ns>-commands` doc — different titles, different
    owners, and trashing one destroys an unconsumed mark or command.
-4. Log `drive=OK(<chars>)`.
+5. Log `drive=ok(<KB>)`, using the size of the file you sent.
 
 **The create always happens before any trash.** If the create fails, log
 `drive=FAILED(<reason>)` and trash **nothing**, so the page keeps reading the doc
@@ -1089,7 +1205,7 @@ that is already there. `update_file` on this connector is metadata-only and
 cannot replace a body — that is why every write is create-then-trash rather than
 an update.
 
-### 7.2 Mirror the state (`<ns>-mirror`)
+### 7.3 Mirror the state (`<ns>-mirror`)
 
 *Heavy runs only. The light run never does this.*
 
@@ -1126,7 +1242,7 @@ into a dated folder and touches nothing live. Overwriting live files needs
 versions of the user's history is real, and that is the user's call, made in
 chat, with the unpacked copy in front of them.
 
-### 7.3 Do not republish the artifact
+### 7.4 Do not republish the artifact
 
 The published page at `config.artifact.url` reads the Drive doc by itself. It
 only needs republishing if `web/page-template.html` changes, which scheduled runs
@@ -1343,8 +1459,8 @@ The full explanation of why there are three watchdogs is in
 Append **one line** to `data/runlog.txt`: ISO timestamp, item count, diff counts,
 notifications sent, errors, and every status token this run produced
 (`mail:*`, `materials=*`, `board=*`, `cmd=*`, `completions=*`, `studymodel=*`,
-`render=*`, `drive=*`, `mirror=*`, `reauth=*`, `behind=*`, `calendar=*`,
-`deadman=*`, `push=*`).
+`gcal=*`, `render=*`, `drive=*`, `mirror=*`, `reauth=*`, `behind=*`,
+`calendar=*`, `deadman=*`, `push=*`).
 
 Never grow this file beyond 500 lines — trim from the top.
 
@@ -1401,7 +1517,8 @@ Writing this line is the last thing you do. Then stop.
   `data/phone-items.json`, `data/snooze.json`, `data/block-edits.json` and
   `data/command-log.json` (all five only via `command-ingest.mjs`),
   `data/backup.b64.txt` (only via `drive-bundle.mjs --pack`), `data/deadman.json`
-  (only via `deadman.mjs`), and `data/tmp/` scratch it deletes in the same step.
+  (only via `deadman.mjs`), `data/gcal-items.json` (only via `gcal-ingest.mjs`),
+  and `data/tmp/` scratch it deletes in the same step.
 - **Inside the materials workspace**, a scheduled run may do exactly two things:
   `materials-sync.mjs` creating category folders and writing new files, and
   saving a course-mail attachment into that same shape (3.10). Everything else in
@@ -1441,6 +1558,11 @@ Writing this line is the last thing you do. Then stop.
   hand, and **never defer an exam** — `command-ingest.mjs` refuses that outright,
   because the institution sets that date and a phone does not. An override can
   only ever move a date LATER, so it can silence an alert but never invent one.
+- **The inbound calendar is read-only, in both senses.** A scheduled run may
+  LIST and GET events through the calendar connector and may never create,
+  update, delete, move or respond to one, never call `authenticate`, and never
+  log an event body, a location, an attendee or a calendar address.
+  `data/gcal-items.json` is written by `gcal-ingest.mjs` and by nothing else.
 - **Never suppress a calendar alarm.** `data/snooze.json` quiets pushes and
   nothing else. The user set those alarms up to be un-ignorable, and "stop
   nagging me" is not "let me miss my exam".

@@ -79,6 +79,29 @@ export const DEFAULTS = Object.freeze({
 
   standardsPlan: { enabled: false, course: null, label: "Standards" },
 
+  // INBOUND calendars: the user's own meetings, read into payload.meetings[].
+  // Off by default and opt-in, because it costs an authorized calendar
+  // connector in the user's own Claude account and most agendas do not need
+  // one. `connectors.calendar.*` is the other direction - a SINK that writes
+  // deadlines out - and the two never share a config block.
+  //
+  // `skipUidSuffix` is the loop guard: the ICS sink writes events whose UID
+  // ends `@<namespace>.agenda.local`, so an agenda that also subscribes to its
+  // own file would otherwise re-import every deadline it just published. null
+  // means "derive it from the namespace", which is right for everyone who has
+  // not renamed anything.
+  calendars: {
+    gcal: {
+      enabled: false,
+      calendarId: "primary",
+      feed: "calendar",
+      label: "Calendar",
+      maxEvents: 200,
+      skipUidSuffix: null,
+      skipDescriptionMarker: "Auto-created by the agenda.",
+    },
+  },
+
   sideProject: {
     enabled: false,
     label: "Side Project",
@@ -208,6 +231,39 @@ function mergeDefaults(base, over) {
 
 const NS_RE = /^[a-z0-9-]{3,24}$/;
 
+// ---------------------------------------------------------------------------
+// Feed ids
+//
+// A feed id prefixes every key an inbound calendar mints:
+// `<feed>|<uid>|<start>`. That is a THIRD key space (docs/PROTOCOL.md 4a), and
+// the only thing keeping it apart from a study session's `fb|<day>|<bucket>` is
+// which prefix a key starts with - `isSessKey()` is a three-character test and
+// nothing downstream re-checks. The charset alone does not do it: "fb" is two
+// legal characters. So the id is refused here, once, and both the config and
+// the ingest CLI ask this function rather than each keeping a regex.
+// ---------------------------------------------------------------------------
+
+/** The charset a feed id may use. */
+export const FEED_ID_RE = /^[a-z0-9-]{1,24}$/;
+/** Prefixes that already name a key space in this repo, so no feed may take one. */
+export const RESERVED_FEED_IDS = Object.freeze({ fb: "study sessions (fb|<day>|<bucket>)" });
+/** The longest feed label the page has room for. */
+export const MAX_FEED_LABEL = 24;
+/** The most events one inbound-calendar document may be asked to hold. */
+export const MAX_FEED_EVENTS = 5000;
+
+/**
+ * Why this feed id is unusable, or `null` when it is fine. One sentence, safe
+ * to print. PURE.
+ */
+export function feedIdError(value) {
+  if (typeof value !== "string" || !FEED_ID_RE.test(value)) {
+    return `expected [a-z0-9-]{1,24}, got ${JSON.stringify(value)}`;
+  }
+  const taken = RESERVED_FEED_IDS[value];
+  return taken ? `${JSON.stringify(value)} is a reserved key-space prefix - it names ${taken}` : null;
+}
+
 /**
  * Resolve, read, validate and default a configuration.
  *
@@ -247,14 +303,76 @@ export function loadConfig(pathOrNull = null, opts = {}) {
 
   const cfg = mergeDefaults(DEFAULTS, clean(raw));
   cfg.sourcePath = file;
+  validate(cfg, warn);
+  return cfg;
+}
 
+/**
+ * Every rule that makes a loaded config USABLE, in one place. Each one throws a
+ * `ConfigError` naming the key, because the alternative is a value that loads
+ * silently and then behaves as though it had been left out - `enabled: "true"`
+ * is the shape of that bug, and it reads as ON to anything but a `=== true`.
+ *
+ * Unknown keys WARN rather than throw, matching what the top level already does
+ * with them: a key this version has not heard of is usually a newer config or a
+ * typo, and neither is worth refusing to draw somebody's week over.
+ */
+function validate(cfg, warn) {
   if (typeof cfg.namespace !== "string" || !NS_RE.test(cfg.namespace)) {
     throw new ConfigError(
       `config: "namespace" must be 3-24 characters of a-z, 0-9 or "-" (got ${JSON.stringify(cfg.namespace)})`,
       "namespace",
     );
   }
-  return cfg;
+  validateCalendars(cfg, warn);
+}
+
+const typeError = (key, must, got) =>
+  new ConfigError(`config: "${key}" ${must} (got ${JSON.stringify(got)}). See docs/CONFIG.md`, key);
+
+/** Warn about keys this version does not know, the way the top level does. */
+function warnUnknown(warn, prefix, value, known) {
+  for (const k of Object.keys(value)) {
+    if (!isNote(k) && !known.has(k)) warn(`config: ignoring unknown key "${prefix}.${k}" (see docs/CONFIG.md)`);
+  }
+}
+
+/**
+ * `calendars.gcal` - the INBOUND calendar. Every value here reaches a different
+ * subsystem: `enabled` is the one switch `render.mjs` and `gcal-ingest.mjs`
+ * read, `feed` becomes the prefix of every meeting key on the wire, and
+ * `maxEvents` bounds a file on disk.
+ */
+function validateCalendars(cfg, warn) {
+  if (!isPlain(cfg.calendars)) throw typeError("calendars", "must be an object", cfg.calendars);
+  warnUnknown(warn, "calendars", cfg.calendars, new Set(Object.keys(DEFAULTS.calendars)));
+
+  const gcal = cfg.calendars.gcal;
+  if (!isPlain(gcal)) throw typeError("calendars.gcal", "must be an object", gcal);
+  warnUnknown(warn, "calendars.gcal", gcal, new Set(Object.keys(DEFAULTS.calendars.gcal)));
+
+  if (typeof gcal.enabled !== "boolean") {
+    throw typeError("calendars.gcal.enabled", "must be true or false, not a string or a number", gcal.enabled);
+  }
+  const feedWhy = feedIdError(gcal.feed);
+  if (feedWhy) throw new ConfigError(`config: "calendars.gcal.feed" ${feedWhy}. See docs/CONFIG.md`, "calendars.gcal.feed");
+
+  if (gcal.calendarId !== null && typeof gcal.calendarId !== "string") {
+    throw typeError("calendars.gcal.calendarId", "must be a string", gcal.calendarId);
+  }
+  if (typeof gcal.label !== "string" || !gcal.label.trim() || gcal.label.length > MAX_FEED_LABEL) {
+    throw typeError("calendars.gcal.label", `must be 1-${MAX_FEED_LABEL} characters of text`, gcal.label);
+  }
+  if (!Number.isInteger(gcal.maxEvents) || gcal.maxEvents < 1 || gcal.maxEvents > MAX_FEED_EVENTS) {
+    throw typeError("calendars.gcal.maxEvents", `must be a whole number from 1 to ${MAX_FEED_EVENTS}`, gcal.maxEvents);
+  }
+  // Both guards accept "" - that is how a user switches one off - and null,
+  // which means "derive the default".
+  for (const key of ["skipUidSuffix", "skipDescriptionMarker"]) {
+    if (gcal[key] !== null && typeof gcal[key] !== "string") {
+      throw typeError(`calendars.gcal.${key}`, "must be a string or null", gcal[key]);
+    }
+  }
 }
 
 /**
