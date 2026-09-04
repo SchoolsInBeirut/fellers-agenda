@@ -1,6 +1,6 @@
 {
   "name": "fellers-agenda",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A weekly agenda that builds itself: scrape your LMS, plan the week, render one self-contained page.",
   "type": "module",
   "private": true,
@@ -10,6 +10,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "setup": "node scripts/setup.mjs",
     "demo": "node scripts/demo.mjs",
     "scrape": "node src/scrape.mjs",
     "render": "node src/render.mjs",
@@ -32,6 +33,12 @@
     "scripts",
     "runbooks",
     "fixtures",
-    "docs"
+    "docs",
+    ".claude",
+    "config.example.json",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "setup.cmd",
+    "setup.sh"
   ]
 }

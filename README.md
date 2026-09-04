@@ -1,19 +1,50 @@
 # Feller's Agenda
 
-**There are LMS connectors, and there are generic agent templates. Nobody has
-published the layer in between — the part that merges your classes, your mail
-and your side project into one planned, rendered, phone-readable week.** This is
-that layer.
+**A weekly agenda that builds itself.** Twice a day it reads your learning
+management system, works out how much time each course actually deserves, packs
+study blocks around your class timetable, and renders one self-contained page you
+read on your phone and tick things off from. There are LMS connectors and there
+are generic agent templates; this is the layer in between, and it is for a
+student who wants a plan rather than another list. **You do not need to know how
+to code** — one command sets it up, and the questions it asks are about your
+school, not about software.
 
-You do not need to know how to code. You clone this repo, open it in Claude
-Code, and say `hey`. An agent reads the setup script in this repository and asks
-you about ten questions, one at a time. You click through the permission and
-login screens it warns you about first. Then you have a weekly agenda that
-rebuilds itself twice a day.
+## Quick start
 
-**In a hurry?** Skip straight to [Install](#install), and
-`node scripts/demo.mjs` renders a complete sample agenda with no accounts and no
-configuration — see [See it working](#see-it-working-before-you-connect-anything).
+```
+1.  Click "Use this template" above -> Create a new repository -> Private
+2.  git clone <your new repo>  &&  cd <it>
+3.  npm run setup          (Windows: double-click setup.cmd - macOS/Linux: ./setup.sh)
+4.  Answer five questions. It shows you a working demo agenda before anything is connected.
+5.  Open the demo agenda it prints, then work through the five steps it hands you.
+```
+
+> **Do not fork.** A fork of a public repository cannot be made private, and your
+> agenda will hold your courses, your grades and your class schedule.
+> `npm run setup` is safe to run again at any point; it updates rather than
+> starting over, and a namespace already in `config.json` is kept rather than
+> re-asked.
+
+## Setup does this for you / you do this by hand
+
+`npm run setup` is honest about where it stops. Five things need a human, and
+none of them is a limitation this template could engineer away.
+
+| `npm run setup` does this for you | You do this by hand — and why a script cannot |
+|---|---|
+| Checks Node, your OS, `git` and Claude Code, and prints the exact install line for anything missing | **Install Node 22+.** A script that installs a runtime without asking is a script that broke somebody's machine. It prints `winget` / `brew` / `fnm` and stops |
+| Creates `config.json` from the example and writes your timezone (auto-detected), namespace, school and LMS choice | **Log in to your school.** Brightspace opens *your school's own* sign-in page and your phone gets a two-factor push. Your password never passes through this repository, and no repository can approve a push for you |
+| Fills in `CLAUDE.md` Part 2 so the setup agent does not re-ask what you just answered | **Pick your courses and paste your timetable.** These come from a live `get_my_courses` call and from your head. Say `hey` in Claude Code and the setup agent does exactly this part |
+| Rewrites `.mcp.json` into the Windows `cmd` wrapper — a bare `npx` entry there fails *silently* on Windows | **Install Claude Code.** It is what runs the scheduled runs. Setup itself does not need it, so it reports and continues |
+| Runs the preflight and shows you the demo agenda, built from bundled sample data, before you connect any account | **Authorise the Google Drive connector inside claude.ai.** That approval lives on your Claude account, not in this folder. Nothing here can grant it, and a template claiming otherwise would be lying to you |
+| Installs the five scheduled tasks on Windows, and writes the exact `launchd` plists / crontab lines for *your* clone path on macOS and Linux — offering to install the plists | **Publish the page, once.** [`docs/ARTIFACT.md`](docs/ARTIFACT.md) has a numbered path per client. After that the page refreshes itself and you never republish it |
+
+Prefer the conversational route? `npm run setup -- --agent` leaves `CLAUDE.md`
+alone; open the folder in Claude Code and say `hey`. The `--` separator is not
+optional — npm keeps a flag given without it, so `npm run setup --agent` stops
+and prints the command that works rather than quietly doing something else.
+Prefer to do all of it by hand? [`docs/SETUP.md`](docs/SETUP.md) is the same
+thing in eleven steps, and every screen is described before it appears.
 
 ---
 
@@ -46,6 +77,12 @@ A single web page, private to you, that shows the next seven days as a grid.
 - **Tick things off from your phone.** The page writes your marks back through a
   Google Doc; the next run picks them up. Untick something and it un-marks —
   your marks are yours and only you can revoke them.
+- **Your own calendar, read in** (optional). Point it at Google Calendar — or any
+  calendar with a claude.ai connector — and your meetings become busy time the
+  planner packs study *around*, instead of hours it quietly books over. This is
+  the inbound direction, and it is the opposite of the ICS **sink**, which writes
+  your deadlines *out* to a calendar you subscribe to; run either, both, or
+  neither.
 
 This repository has no telemetry, no analytics and no crash reporting. What
 leaves your computer, and where it goes, is spelled out in
@@ -53,29 +90,18 @@ leaves your computer, and where it goes, is spelled out in
 
 ---
 
-## Install
+## Getting your own copy
 
-**With the GitHub CLI** (your agent can run this for you). `gh` has to be logged
-in first, and `gh auth login` is an **interactive wizard** — it asks which
-protocol you want, then opens a browser with an eight-character code to paste.
-Do that yourself, in your own terminal, before the line below:
+The template button in Quick Start above is the whole story. If you would rather
+use the GitHub CLI, `gh auth login` has to happen first, and it is an
+**interactive wizard** — it asks which protocol you want, then opens a browser
+with an eight-character code to paste. Run it yourself, in your own terminal:
 
 ```
 gh auth login                    # once, interactive — see the note above
 gh repo create my-agenda --template SchoolsInBeirut/fellers-agenda --private --clone
-cd my-agenda
-claude
+cd my-agenda && npm run setup
 ```
-
-Then type `hey`.
-
-**Without `gh`:** click the green **Use this template** button at the top of this
-page → **Create a new repository** → set the visibility to **Private** → then
-`git clone` your new repo and run `claude` inside it.
-
-> **Do not fork this repository.** A fork of a public repo cannot be made
-> private, and your agenda will contain your courses, your grades and your class
-> schedule. Use the template button, or `--template` with `--private`.
 
 **Time:** 5–10 minutes of your attention, plus up to 30 more the first time if
 your school's login is slow or Node is not installed yet. The long pole is
@@ -86,7 +112,7 @@ always the login, never this repo.
 ## See it working before you connect anything
 
 ```
-node scripts/demo.mjs
+npm run demo
 ```
 
 That renders `demo-agenda.html` from bundled fictional data — four courses, a
@@ -94,9 +120,9 @@ week of study blocks, mail, a side-project board — with **no accounts, no
 logins, and no configuration**. Open it in a browser. Everything you see there
 becomes your real week once you connect your school account.
 
-This is the first thing setup does, on purpose. If the demo does not render,
-nothing downstream can work, and you have found that out in sixty seconds
-instead of after a login flow.
+`npm run setup` does this for you, before it asks you to connect anything, on
+purpose. If the demo does not render, nothing downstream can work, and you have
+found that out in sixty seconds instead of after a login flow.
 
 ---
 
@@ -137,7 +163,7 @@ it.** Everything else stays between you and services you already use.
 
 | Where your data goes | What goes there |
 |---|---|
-| **Anthropic (Claude)** | Every scraped assignment title, announcement body, grade row and mail subject enters the model's context on every run — that is the design, not a leak: an agent is what writes the descriptions, triages the mail and moves the payload. Publishing the page uploads `agenda.html` to claude.ai, and it contains your courses, deadlines, grades and timetable |
+| **Anthropic (Claude)** | Every scraped assignment title, announcement body, grade row and mail subject enters the model's context on every run — and every meeting title too, if you turn the inbound calendar on. That is the design, not a leak: an agent is what writes the descriptions, triages the mail and moves the payload. Publishing the page uploads `agenda.html` to claude.ai, and it contains your courses, deadlines, grades, timetable and meetings |
 | **Your Google Drive** | The payload document, the state mirror, and the two write-back documents. Four exact titles, nothing else read or written |
 | **Your school's LMS** | Read-only requests for your own enrolments, assignments, announcements and grades |
 | **Your own machine** | Everything else: `data/`, `config.json`, `agenda.html`, the optional `.ics` file, the Outlook calendar |
@@ -157,7 +183,7 @@ is untrusted input, is [`SECURITY.md`](SECURITY.md).
 
 | File | What it answers |
 |---|---|
-| [`docs/SETUP.md`](docs/SETUP.md) | The whole setup, step by step, in human words |
+| [`docs/SETUP.md`](docs/SETUP.md) | The whole setup, step by step, in human words — and which steps `npm run setup` already did |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it works, with a diagram |
 | [`docs/CONFIG.md`](docs/CONFIG.md) | Every configuration key, annotated |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | The wire protocol: envelopes, payload, buses |
@@ -165,18 +191,40 @@ is untrusted input, is [`SECURITY.md`](SECURITY.md).
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Symptom → cause → fix |
 | [`docs/SCHEDULING.md`](docs/SCHEDULING.md) | Making it run by itself |
 | [`docs/ARTIFACT.md`](docs/ARTIFACT.md) | Publishing the page so your phone can read it |
+| [`docs/PHONE.md`](docs/PHONE.md) | Asking your agenda questions from a phone, in plain language, with no page open |
 | [`docs/connectors/`](docs/connectors/) | One page per source, including the ones that do not work |
 | [`docs/design-notes/`](docs/design-notes/) | Why some of the rules are the way they are |
 
 ---
 
-## Last verified working: 2026-09-02
+## Last verified working: 2026-09-04
 
 This stack sits on top of five external services — an LMS, an MCP server, Google
 Drive, a browser login chain and a scheduler — and **it will rot.** Login pages
 change, packages go unmaintained, connector schemas shift. If something below
 this line stops matching reality, open an issue; the date above is the honest
-answer to "is this still true?".
+answer to "is this still true?" — so here is exactly what it covers.
+
+**Exercised on 2026-09-04, Windows 11, Node v24.12.0:** `npm test`; `node
+scripts/setup.mjs --yes --no-demo --skip-auth --skip-schedule` in a scratch copy
+of this repo, twice, confirming the second run leaves `config.json`, `CLAUDE.md`
+and `.mcp.json` byte-identical; the same wizard through `./setup.sh` under Git
+Bash, including the demo render; `npm run doctor`; `npm run demo`; the
+`--agent`, `--reset`, `--help`, unknown-flag and no-terminal paths; and the
+inbound-calendar CLI run as a subprocess against the bundled fixtures for every
+exit code it can return. The published page was decoded and rendered under jsdom
+only.
+
+**NOT exercised on that date, and stated plainly rather than implied:** the
+Brightspace browser login and its two-factor push; a Canvas token against a real
+Canvas; `scripts\install-tasks.cmd` against Windows Task Scheduler; installing
+the generated `launchd` plists or crontab on a real Mac or Linux box (they are
+generated and unit-tested, not installed); publishing the page to claude.ai; a
+live call to any calendar connector; and `docs/PHONE.md` against a real claude.ai
+Project. Everything in that second list that existed before this release was last
+verified on **2026-09-02**; the inbound calendar and the phone brief are new here
+and have never been exercised live — see [`CHANGELOG.md`](CHANGELOG.md) for what
+each run covered.
 
 ---
 
@@ -239,6 +287,8 @@ canonical ones; prefer them in prose, in digests and in commit messages.
 | **connector** — one adapter in `src/connectors/` | source, adapter, plugin (a *source* is the service behind it) |
 | **the board** / the side-project bucket, named by `sideProject.label` | `board[]`, the sideProject, the Side Project column |
 | **calendar sink** — `kind: "calendar-sink"`, configured under `connectors.calendar.<provider>`. There is no `connectors.calendar-sink` | calendar connector |
+| **the inbound calendar** — `calendars.gcal` in the config, `src/connectors/gcal-ingest.mjs` on disk. It reads the user's own meetings IN and is the opposite of a sink | the calendar connector, gcal-sync, the meetings connector |
+| **a meeting** — an entry in `payload.meetings[]`, from the user's own calendar | a class, a lecture (those are `schedule[]`, and the word for them is **class meeting**) |
 
 ---
 
@@ -267,6 +317,13 @@ canonical ones; prefer them in prose, in digests and in commit messages.
    number. Silence is correct.
 8. **Positive evidence only, one direction.** A scheduled run may mark something
    done. Only the user may un-mark it.
+9. **The inbound calendar is read-only.** Nothing in this repository writes to
+   anybody's calendar. A run may LIST and GET events through the calendar
+   connector the user authorized; it may never create, update, delete, move or
+   respond to one, and it may never call `authenticate` — a scheduled run cannot
+   answer a consent screen, so an unauthorized connector is a `SKIPPED` token and
+   a line in the digest. `src/connectors/gcal-ingest.mjs` cannot reach the
+   network at all, which is what makes this a property rather than a promise.
 
 ---
 
@@ -285,6 +342,7 @@ src/study-model.mjs       how much each bucket deserves (0-5 allocations)
 src/focus-engine.mjs      the deterministic planner (blocks, times, minutes)
 src/behind.mjs            the 7-rule clear / notice / behind verdict
 src/render.mjs            payload build + page build
+src/brief.mjs             the plain-text brief that rides after the envelope
 src/command-ingest.mjs    the phone -> pipeline one-way command bus
 src/drive-bundle.mjs      state mirror pack/restore + local backup
 src/stale-check.mjs       in-machine stale-run watchdog ("did a run happen?")
@@ -292,7 +350,11 @@ src/auth-retry.mjs        in-machine auth watchdog ("can we still log in?")
 src/deadman.mjs           off-machine dead-man's switch
 src/materials-sync.mjs    course-file downloader
 
+src/lib/civil-time.mjs    pure day numbers, named zones, wall clock -> instant
+
 src/connectors/           one adapter per source; see docs/EXTENDING.md
+src/connectors/gcal-ingest.mjs    inbound calendar: a saved connector result ->
+                          data/gcal-items.json (pure half: gcal-normalize.mjs)
 web/page-template.html    the published page
 runbooks/                 what a scheduled run does, in order
 scripts/                  launchers, preflight, demo mode, re-auth
@@ -322,11 +384,13 @@ Every CLI accepts `--config <path>` and `--data <dir>`. Without them it uses
 | `node src/behind.mjs --check --stale-docs <N>` | Print the JSON verdict. Always exits 0 |
 | `node src/drive-bundle.mjs --pack` | Write the local backup and `data/backup.b64.txt` |
 | `node src/drive-bundle.mjs --restore <file>` | Unpack a mirror into a dated folder. Never run this on a schedule |
+| `node src/connectors/gcal-ingest.mjs --in data/tmp/gcal-raw.json` | Normalize a saved calendar-connector result into `data/gcal-items.json`. Reads one file, writes one file, no network. `--feed <id>` / `--label <text>` name the feed; a run while `calendars.gcal.enabled` is not `true` writes nothing |
 | `node src/materials-sync.mjs` | Download new course files |
 | `node src/deadman.mjs --arm \| --status` | Plant / inspect the off-machine watchdog |
 | `node src/stale-check.mjs --dry-run --verbose` | Print the stale-run watchdog's current verdict |
 | `node src/auth-retry.mjs --status` | Print what the auth lane can see and the verdict it would reach. Writes nothing, starts no login |
 | `node src/auth-retry.mjs --clear-lock` | Remove `data/auth-locked.json` **after** a human has fixed the credentials. Never run this to make an alarm go away |
+| `npm run setup` | The one-command first-time setup: five questions, `config.json`, `CLAUDE.md` Part 2, the preflight, the demo, the LMS login and the scheduler. Idempotent, and a namespace already in `config.json` is kept rather than re-asked. Flags need the npm separator — `npm run setup -- --help` — or call `node scripts/setup.mjs --help` directly; a flag given to npm instead is refused with the exact command to run, never guessed at. `--agent` leaves the `[NOT SET]` block for the onboarding agent |
 | `node scripts/demo.mjs` | Render `demo-agenda.html` from `fixtures/demo/`. No accounts |
 | `node scripts/validate-setup.mjs` | Preflight every prerequisite, with a fix link per failure. Touches no network |
 | `node scripts/health-check.mjs` | Ask every **enabled** connector's `healthCheck()` whether its backend answers. Writes nothing; `--json` for the machine-readable form |
@@ -354,6 +418,8 @@ silently doing the default thing.
 | `stale-check.mjs` | a decision was reached | the watchdog itself is broken | — | — | — | — | — | — |
 | `auth-retry.mjs` | a decision was reached — **including a login that failed** | the lane itself is broken (bad argument, unwritable state) | — | — | — | — | — | — |
 | `board-github.mjs` | ok | config/output error | — | skipped (`gh` missing, unauthenticated, out of budget) | — | — | — | — |
+| `gcal-ingest.mjs` | ingested, or skipped because `calendars.gcal.enabled` is not true — the last stdout line says which (`feed=…` vs `skipped=disabled`) | hard failure — bad args, a refused feed id (the reserved `fb`), not a calendar listing, unwritable output; the previous file is untouched | — | the `--in` file was missing or unreadable — events younger than 48 h stand in as `status: "stale"`, and the file is written either way | — | — | — | — |
+| `setup.mjs` | done | a step failed / bad flag / an unexpected preflight failure | a prerequisite blocks (Node too old, no terminal, stdin ended at a question) | — | — | — | — | — |
 | `validate-setup.mjs` | every check passed | at least one check failed | — | — | — | — | — | — |
 | `health-check.mjs` | every enabled connector answered, or none is enabled | at least one could not answer — the reasons are printed | — | — | — | — | — | — |
 | `reauth.mjs` | `ok` — session refreshed | `FAILED` — anything else | `NO-CREDS` — nothing saved yet | — | usage — an unknown or conflicting flag; **nothing was run** | `BAD-CREDS` — the password was rejected | `MFA-PENDING` — a push was sent, never approved | `NO-PACKAGE` — the LMS server package is missing |
@@ -422,7 +488,7 @@ headless browsers end up on one profile.
 
 | Title | Written by | Read by | Trashed by |
 |---|---|---|---|
-| `<ns>-data` | a scheduled run, from `data/payload.b64.txt` (`AGD2.`) | the published page | the same run, after the create succeeds |
+| `<ns>-data` | a scheduled run, from `data/payload.b64.txt` (`AGD2.` **plus a plain-text brief after it**) | the published page reads the envelope; the user's phone reads the brief (`docs/PHONE.md`) | the same run, after the create succeeds **and reads the new doc back** |
 | `<ns>-mirror` | a heavy run only, from `data/backup.b64.txt` (`AGM1./AGM2.`) | nothing in the pipeline | the same run, after the create succeeds |
 | `<ns>-completions` | the page, when the user ticks something (`AGC1.`) | `completion.mjs --ingest` | the run that consumed it, and only if it reported `ok` |
 | `<ns>-commands` | the page, when the user drags a block or sends a command (`AGQ1.`) | `command-ingest.mjs --apply` | the run that consumed it |

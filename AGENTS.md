@@ -45,6 +45,8 @@ canonical ones; prefer them in prose, in digests and in commit messages.
 | **connector** — one adapter in `src/connectors/` | source, adapter, plugin (a *source* is the service behind it) |
 | **the board** / the side-project bucket, named by `sideProject.label` | `board[]`, the sideProject, the Side Project column |
 | **calendar sink** — `kind: "calendar-sink"`, configured under `connectors.calendar.<provider>`. There is no `connectors.calendar-sink` | calendar connector |
+| **the inbound calendar** — `calendars.gcal` in the config, `src/connectors/gcal-ingest.mjs` on disk. It reads the user's own meetings IN and is the opposite of a sink | the calendar connector, gcal-sync, the meetings connector |
+| **a meeting** — an entry in `payload.meetings[]`, from the user's own calendar | a class, a lecture (those are `schedule[]`, and the word for them is **class meeting**) |
 
 ---
 
@@ -73,6 +75,13 @@ canonical ones; prefer them in prose, in digests and in commit messages.
    number. Silence is correct.
 8. **Positive evidence only, one direction.** A scheduled run may mark something
    done. Only the user may un-mark it.
+9. **The inbound calendar is read-only.** Nothing in this repository writes to
+   anybody's calendar. A run may LIST and GET events through the calendar
+   connector the user authorized; it may never create, update, delete, move or
+   respond to one, and it may never call `authenticate` — a scheduled run cannot
+   answer a consent screen, so an unauthorized connector is a `SKIPPED` token and
+   a line in the digest. `src/connectors/gcal-ingest.mjs` cannot reach the
+   network at all, which is what makes this a property rather than a promise.
 
 ---
 
@@ -91,6 +100,7 @@ src/study-model.mjs       how much each bucket deserves (0-5 allocations)
 src/focus-engine.mjs      the deterministic planner (blocks, times, minutes)
 src/behind.mjs            the 7-rule clear / notice / behind verdict
 src/render.mjs            payload build + page build
+src/brief.mjs             the plain-text brief that rides after the envelope
 src/command-ingest.mjs    the phone -> pipeline one-way command bus
 src/drive-bundle.mjs      state mirror pack/restore + local backup
 src/stale-check.mjs       in-machine stale-run watchdog ("did a run happen?")
@@ -98,7 +108,11 @@ src/auth-retry.mjs        in-machine auth watchdog ("can we still log in?")
 src/deadman.mjs           off-machine dead-man's switch
 src/materials-sync.mjs    course-file downloader
 
+src/lib/civil-time.mjs    pure day numbers, named zones, wall clock -> instant
+
 src/connectors/           one adapter per source; see docs/EXTENDING.md
+src/connectors/gcal-ingest.mjs    inbound calendar: a saved connector result ->
+                          data/gcal-items.json (pure half: gcal-normalize.mjs)
 web/page-template.html    the published page
 runbooks/                 what a scheduled run does, in order
 scripts/                  launchers, preflight, demo mode, re-auth
@@ -128,11 +142,13 @@ Every CLI accepts `--config <path>` and `--data <dir>`. Without them it uses
 | `node src/behind.mjs --check --stale-docs <N>` | Print the JSON verdict. Always exits 0 |
 | `node src/drive-bundle.mjs --pack` | Write the local backup and `data/backup.b64.txt` |
 | `node src/drive-bundle.mjs --restore <file>` | Unpack a mirror into a dated folder. Never run this on a schedule |
+| `node src/connectors/gcal-ingest.mjs --in data/tmp/gcal-raw.json` | Normalize a saved calendar-connector result into `data/gcal-items.json`. Reads one file, writes one file, no network. `--feed <id>` / `--label <text>` name the feed; a run while `calendars.gcal.enabled` is not `true` writes nothing |
 | `node src/materials-sync.mjs` | Download new course files |
 | `node src/deadman.mjs --arm \| --status` | Plant / inspect the off-machine watchdog |
 | `node src/stale-check.mjs --dry-run --verbose` | Print the stale-run watchdog's current verdict |
 | `node src/auth-retry.mjs --status` | Print what the auth lane can see and the verdict it would reach. Writes nothing, starts no login |
 | `node src/auth-retry.mjs --clear-lock` | Remove `data/auth-locked.json` **after** a human has fixed the credentials. Never run this to make an alarm go away |
+| `npm run setup` | The one-command first-time setup: five questions, `config.json`, `CLAUDE.md` Part 2, the preflight, the demo, the LMS login and the scheduler. Idempotent, and a namespace already in `config.json` is kept rather than re-asked. Flags need the npm separator — `npm run setup -- --help` — or call `node scripts/setup.mjs --help` directly; a flag given to npm instead is refused with the exact command to run, never guessed at. `--agent` leaves the `[NOT SET]` block for the onboarding agent |
 | `node scripts/demo.mjs` | Render `demo-agenda.html` from `fixtures/demo/`. No accounts |
 | `node scripts/validate-setup.mjs` | Preflight every prerequisite, with a fix link per failure. Touches no network |
 | `node scripts/health-check.mjs` | Ask every **enabled** connector's `healthCheck()` whether its backend answers. Writes nothing; `--json` for the machine-readable form |
@@ -160,6 +176,8 @@ silently doing the default thing.
 | `stale-check.mjs` | a decision was reached | the watchdog itself is broken | — | — | — | — | — | — |
 | `auth-retry.mjs` | a decision was reached — **including a login that failed** | the lane itself is broken (bad argument, unwritable state) | — | — | — | — | — | — |
 | `board-github.mjs` | ok | config/output error | — | skipped (`gh` missing, unauthenticated, out of budget) | — | — | — | — |
+| `gcal-ingest.mjs` | ingested, or skipped because `calendars.gcal.enabled` is not true — the last stdout line says which (`feed=…` vs `skipped=disabled`) | hard failure — bad args, a refused feed id (the reserved `fb`), not a calendar listing, unwritable output; the previous file is untouched | — | the `--in` file was missing or unreadable — events younger than 48 h stand in as `status: "stale"`, and the file is written either way | — | — | — | — |
+| `setup.mjs` | done | a step failed / bad flag / an unexpected preflight failure | a prerequisite blocks (Node too old, no terminal, stdin ended at a question) | — | — | — | — | — |
 | `validate-setup.mjs` | every check passed | at least one check failed | — | — | — | — | — | — |
 | `health-check.mjs` | every enabled connector answered, or none is enabled | at least one could not answer — the reasons are printed | — | — | — | — | — | — |
 | `reauth.mjs` | `ok` — session refreshed | `FAILED` — anything else | `NO-CREDS` — nothing saved yet | — | usage — an unknown or conflicting flag; **nothing was run** | `BAD-CREDS` — the password was rejected | `MFA-PENDING` — a push was sent, never approved | `NO-PACKAGE` — the LMS server package is missing |
@@ -228,7 +246,7 @@ headless browsers end up on one profile.
 
 | Title | Written by | Read by | Trashed by |
 |---|---|---|---|
-| `<ns>-data` | a scheduled run, from `data/payload.b64.txt` (`AGD2.`) | the published page | the same run, after the create succeeds |
+| `<ns>-data` | a scheduled run, from `data/payload.b64.txt` (`AGD2.` **plus a plain-text brief after it**) | the published page reads the envelope; the user's phone reads the brief (`docs/PHONE.md`) | the same run, after the create succeeds **and reads the new doc back** |
 | `<ns>-mirror` | a heavy run only, from `data/backup.b64.txt` (`AGM1./AGM2.`) | nothing in the pipeline | the same run, after the create succeeds |
 | `<ns>-completions` | the page, when the user ticks something (`AGC1.`) | `completion.mjs --ingest` | the run that consumed it, and only if it reported `ok` |
 | `<ns>-commands` | the page, when the user drags a block or sends a command (`AGQ1.`) | `command-ingest.mjs --apply` | the run that consumed it |
