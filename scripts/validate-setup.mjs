@@ -19,7 +19,10 @@
 //  probe is wrapped, every failure is a result rather than an exception, and
 //  the process only ever exits 0 or 1.
 //
-//  It reads nothing from data/ and writes nothing anywhere except stdout.
+//  It writes nothing anywhere except stdout, and the only thing it reads out of
+//  data/ is whether two files exist: its own write probe, and the inbound
+//  calendar's `gcal-items.json` (one field of it - the feed's status). No
+//  scraped content, no grades, no deadlines.
 //
 //  EXIT CODES
 //    0  every hard check passed (warnings and notes do not fail)
@@ -30,6 +33,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// Both live beside this file, in scripts/lib/. They are the same two functions
+// the wizard uses, imported rather than copied so the preflight's table and
+// CLAUDE.md's "Connectors on:" line cannot drift apart.
+import { connectorsOn } from "./lib/setup-config.mjs";
+import { checkGcal, GCAL_FILE } from "./lib/setup-gcal.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -399,20 +408,34 @@ await (async () => {
     /* a malformed courses block was already reported by Config validation */
   }
 
+  // The INBOUND calendar. It is not under `connectors` - it reads the user's
+  // own meetings in, where `connectors.calendar.*` writes deadlines out - so
+  // nothing above sees it, and its failure mode is silence: an empty
+  // `meetings[]` looks exactly like a calendar with nothing on it.
+  //
+  // Every shape rule for the block lives in `validateCalendars()` in
+  // `src/lib/config.mjs`, which ran above: a malformed one has already FAILed
+  // "Config validation" with the offending key named, and never reaches here.
+  // So this reports rather than judges, and adds the one thing a loader cannot
+  // know - whether a run has written `data/gcal-items.json` yet, and what it
+  // said.
+  check("Inbound calendar", null, () => {
+    const p = join(REPO, GCAL_FILE);
+    let file = { exists: existsSync(p), status: null };
+    if (file.exists) {
+      try {
+        file = { exists: true, status: readJson(p)?.feeds?.[0]?.status ?? null };
+      } catch {
+        file = { exists: true, status: "unreadable" };
+      }
+    }
+    return checkGcal(cfg, file);
+  });
+
   // Everything else is a note: an optional connector being off is the shipped
   // default and must never look like a fault.
   try {
-    const on = [];
-    for (const [kind, providers] of Object.entries(cfg?.connectors ?? {})) {
-      if (kind === "materials") {
-        if (providers?.enabled === true) on.push("materials");
-        continue;
-      }
-      for (const [name, c] of Object.entries(providers ?? {})) {
-        if (c && c.enabled === true) on.push(`${kind}.${name}`);
-      }
-    }
-    if (cfg?.drive?.enabled === true) on.push("drive");
+    const on = connectorsOn(cfg);
     record(NOTE, "Connectors turned on", on.length ? on.join(", ") : "none yet");
   } catch {
     /* a malformed connectors block was already reported above */

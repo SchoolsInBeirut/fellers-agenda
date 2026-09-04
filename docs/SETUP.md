@@ -2,6 +2,72 @@
 
 **You do not have to read this page.**
 
+## Fast path
+
+```
+npm run setup
+```
+
+Windows: double-click **`setup.cmd`**. macOS / Linux: **`./setup.sh`**. All three
+are the same thing — `node scripts/setup.mjs`.
+
+It asks five questions, writes `config.json` and `CLAUDE.md`, runs the preflight,
+renders the demo agenda, offers the LMS login, and offers to install the
+scheduled tasks. It is **idempotent**: run it again after you stop halfway, after
+you move the folder, or any time you want to change an answer. It never asks for
+a password, never turns off a permission prompt, and stops rather than guessing.
+
+**Flags need the npm separator.** `npm run setup --yes` gives the flag to *npm*;
+`npm run setup -- --yes` passes it through. Setup **spots the first form and
+stops** — npm leaves the flag behind in the environment, and acting on that
+would mean guessing — so you get one line naming the exact command to run and
+nothing else happens. Calling the script directly — `node scripts/setup.mjs
+--yes` — always works, and so does `setup.cmd --yes` / `./setup.sh --yes`, which
+insert the `--` for you.
+
+| Flag | What it does |
+|---|---|
+| `--yes` | Take every safe default and ask nothing. **Never starts a login and never installs a scheduled task** — both reach outside this folder |
+| `--schedule` | With `--yes`, install the scheduled tasks anyway |
+| `--agent` | Leave the `[NOT SET]` block in `CLAUDE.md` alone, for the conversational route below |
+| `--skip-auth` / `--skip-schedule` / `--no-demo` | Skip exactly one step |
+| `--reset` | Hand over to `scripts/reset.mjs` (which lists and deletes nothing) |
+| `--help` | The same list, from the script |
+
+An unknown flag is a **hard error** and nothing runs — the same rule
+`scripts/reauth.mjs` follows, for the same reason: a typo that silently selects
+the default is how you end up believing you skipped a step you did not skip.
+
+| Exit | What it means |
+|---|---|
+| **0** | The wizard finished its own steps. The preflight still failing on *"Your courses"* is the expected handover, not a fault |
+| **1** | A step failed, a flag was wrong, or the preflight reported a failure no step below closes — the message says which |
+| **2** | A prerequisite blocks everything: Node is too old, there is no terminal to ask in, or stdin ended (Ctrl+D) at a question. Nothing is written; `node scripts/setup.mjs --yes` takes the defaults instead |
+
+### Which of the eleven steps below the wizard actually does
+
+| Step | Wizard |
+|---|---|
+| **1** preflight | **Does it.** Runs `scripts/validate-setup.mjs` and reads the table back to you, saying which failures are the expected state at that point |
+| **2** the demo | **Does it.** Unless `--no-demo` |
+| **3** how you want to be talked to | **Does it.** One question; the answer becomes `**User style:**` in `CLAUDE.md` Part 2 |
+| **4** timezone, wake time, school | **Partly.** It asks the timezone (auto-detected, you confirm), your school's name and LMS address, and adds a namespace question the agent does not ask — on a fresh checkout only; a namespace already in `config.json` is kept. **`wakeTime` stays at the shipped `10:00`** — change it in `config.json`, or let the setup agent ask |
+| **5** connect your school | **Starts it, you finish it.** It rewrites `.mcp.json` for Windows itself, then runs `npx -y <package> auth` in the foreground for Brightspace — the browser login and the two-factor push are yours. For Canvas it takes the token and verifies it with `scripts/health-check.mjs` |
+| **6** your courses | **Manual only.** Needs a live `get_my_courses`. The preflight keeps FAILing on *"Your courses"* until this is done, which is the honest handover |
+| **7** your timetable | **Manual only.** It is in your head, not on disk |
+| **8** your first real run | **Manual only.** It prints the two commands |
+| **9** Google Drive | **Manual only.** The connector approval lives on your Claude account; publishing is `docs/ARTIFACT.md` |
+| **10** optional extras | **Partly.** It installs the scheduled tasks (Windows) or writes the exact `launchd`/`cron` files for your clone path (macOS/Linux). Mail, ICS, the board and Gradescope are untouched |
+| **11** close out | **Does it.** Fills the six `CLAUDE.md` Part 2 fields, so the setup agent stops triggering on a greeting. Two of them — **School** and **Courses** — get a "not yet, here is what to do" sentence instead of a value when the wizard could not know, because writing `[NOT SET]` back would re-trigger the agent and leaving them blank would hide the work |
+
+**So the shortest honest path is:** `npm run setup`, then open the folder in
+Claude Code and say `hey` — the setup agent picks up at Step 6 and does courses,
+the timetable and the first run with you.
+
+---
+
+## The conversational path
+
 Open the folder in Claude Code, type `hey`, and an agent does all of this with
 you, one question at a time. This is the same thing written down — for when you
 want to know what is coming, when you want to do a step yourself, or when
@@ -24,8 +90,9 @@ screen and prompt, in the order it arrives, so none of them is a surprise:
 | 6 | **`gh auth login`**, an interactive wizard you type into yourself | Step 10, and only if you want the GitHub board |
 
 **None of these can be skipped or pre-granted by a repository**, and a template
-claiming otherwise would be lying to you. The setup agent announces each one
-before it appears, which is the only honest option available.
+claiming otherwise would be lying to you. Both setup routes — `npm run setup` and
+the setup agent — announce each one before it appears, which is the only honest
+option available.
 
 ---
 
@@ -53,7 +120,7 @@ into github.com. Run it yourself, in your own terminal:
 gh auth login
 gh repo create my-agenda --template SchoolsInBeirut/fellers-agenda --private --clone
 cd my-agenda
-claude
+npm run setup          # or: claude, then say `hey`
 ```
 
 No `gh`? Click the green **Use this template** button on the repository page →
@@ -68,15 +135,20 @@ your new repo.
 ## Step 1 — preflight
 
 ```
-node scripts/validate-setup.mjs
+npm run doctor          # = node scripts/validate-setup.mjs
 ```
+
+*`npm run setup` runs this for you and reads the result back, saying which
+failures are the expected state at that moment.*
 
 **What should have happened:** a short table with PASS, FAIL, WARN or NOTE
 against each check — Node, your operating system, Claude Code, `git`, `gh`
 (optional), the repository layout, the demo fixtures, whether `data/` is
 writable, whether `config.json` exists yet **and loads with everything its
 enabled features need**, whether an LMS source is enabled *and* configured,
-`.mcp.json`, and on Windows whether classic Outlook is present.
+whether the inbound calendar is on (and if so, whether a run has written
+`data/gcal-items.json` yet), `.mcp.json`, and on Windows whether classic Outlook
+is present.
 
 A NOTE is context, not a problem. `config.json: not created yet` is the correct
 state before setup.
@@ -93,8 +165,10 @@ something broke, it is the preflight telling you setup is not finished. Say
 ## Step 2 — the demo (this is the important one)
 
 ```
-node scripts/demo.mjs
+npm run demo            # = node scripts/demo.mjs
 ```
+
+*`npm run setup` runs this for you too, unless you pass `--no-demo`.*
 
 **No accounts. No configuration. No logins. No network.** It renders
 `demo-agenda.html` from bundled fictional data at a fixed instant.
@@ -143,6 +217,9 @@ one. It goes into `CLAUDE.md` Part 2 as **User style**, and every later
 conversation — with this agent and every future one — calibrates to it. Say "just
 do it" and you will never be shown a command again.
 
+`npm run setup` asks the same question as `terminal / just-do-it` and writes the
+same two sentences, so the two routes converge.
+
 ---
 
 ## Step 4 — three questions
@@ -168,6 +245,17 @@ Nothing else connects to it. Answering Q4 does not, on its own, connect anything
 to your school. Step 5 does that.
 
 `config.json` is created by copying `config.example.json`. It is git-ignored.
+
+**`npm run setup` asks Q2 and Q4 — and one more the agent does not: your
+`namespace`**, which prefixes the four Google Drive document titles. It suggests
+one from your folder name, and **asks it only once, on a checkout with no
+`config.json`.** A namespace already in the file is kept and not re-offered:
+changing it renames all four Drive documents at the same moment, so a page you
+have already published goes on reading a `<old>-data` nothing writes any more —
+silently, because from a phone that looks exactly like a pipeline with nothing
+to say. To change it on purpose, edit `namespace` in `config.json`, then
+republish the page. **It does not ask Q3**: `wakeTime` stays at the shipped
+`10:00`. Change it in `config.json`, or say `hey` and the setup agent will ask.
 
 **The copy carries a placeholder cast** — five invented courses with invented
 ids, a matching `difficulty` map and two sample timetable entries. Steps 6 and 7
@@ -256,8 +344,10 @@ On Windows an stdio `npx` server **must** be wrapped:
 ```
 
 A bare `npx` entry **fails silently on Windows** — the server never starts,
-nothing is raised, and the only symptom is an empty course list. The agent
-rewrites this for you, and `validate-setup.mjs` checks for it too.
+nothing is raised, and the only symptom is an empty course list. **Both routes
+rewrite this for you** — `npm run setup` does it as soon as you say your school
+uses Brightspace, and the setup agent does it at this step — and
+`validate-setup.mjs` checks for it either way.
 
 **Then restart Claude Code.** Claude Code reads `.mcp.json` when a session
 starts, so the corrected entry is not live in the session that edited it. Close
@@ -427,7 +517,7 @@ Offered one at a time. Say no to any of them and nothing is lost.
 | **Outlook** | Mail triage, plus deadline events on an Exchange calendar that push to your phone, plus the dead-man's switch | Windows and **classic** Outlook. `docs/connectors/outlook.md` |
 | **ICS calendar** | Deadline reminders on any platform: one standard `.ics` file your calendar app subscribes to | Nothing. `docs/connectors/calendar-ics.md`. It does **not** give you the dead-man's switch |
 | **Side-project board** | Non-course work becomes visible so it stops losing silently to whatever the LMS is shouting about | A GitHub org, and `gh auth login` — see the warning below. `docs/connectors/github.md` |
-| **Scheduling** | It runs by itself, twice a day plus a two-hourly sync | `scripts\install-tasks.cmd` on Windows; `docs/SCHEDULING.md` elsewhere, where the agent writes the files for you |
+| **Scheduling** | It runs by itself, twice a day plus a two-hourly sync | `npm run setup` offers this last — `scripts\install-tasks.cmd` on Windows, and on macOS/Linux it prints the `launchd` plists or crontab block with your clone's real path already in them. `docs/SCHEDULING.md` has all three |
 | **Gradescope** | Submission status from an external grading service | **Off by default.** Read `extras/gradescope/README.md` — including the part about checking your institution's and the service's terms — before enabling it |
 
 ### Two of these stop and wait for you to type
@@ -463,6 +553,14 @@ filled is removed, so the setup agent stops triggering on a greeting:
 **Connectors on:** lms.brightspace, drive
 ```
 
+**`npm run setup` writes the same six lines**, with one difference it states out
+loud: it cannot know your courses, and it may not know your school, so those two
+fields get a *"not chosen yet — connect your LMS, then say `hey`"* sentence
+rather than a value. That is deliberately **not** the `[NOT SET]` sentinel: the
+real gate on courses is the preflight, which keeps FAILing on *"Your courses"*
+until Step 6 replaces the example cast. `npm run setup -- --agent` skips this
+step entirely and leaves the sentinels for the agent.
+
 From here:
 
 | Say | And it |
@@ -484,7 +582,7 @@ Nothing here is destructive to your school account.
 **One command, the same on every operating system:**
 
 ```
-node scripts/reset.mjs
+node scripts/reset.mjs          # or: npm run setup -- --reset
 ```
 
 That **lists what it would delete and deletes nothing.** Read the list, and if it

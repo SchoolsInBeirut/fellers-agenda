@@ -89,6 +89,15 @@ the only source of truth for courses, connectors and every other value; when the
 two disagree, `config.json` wins and this block is stale. Setup rewrites it at
 the end of a run and nothing keeps it in sync afterwards.*
 
+*Two things fill this block: the onboarding agent, and `npm run setup`. The
+wizard cannot call `get_my_courses` or read a timetable out of somebody's head,
+so a field it could not answer gets a **"not … yet"** sentence rather than the
+`[NOT SET]` sentinel — writing the sentinel back would re-trigger the setup agent
+for a user who has just finished the wizard. **If any field below reads "not …
+yet", setup is unfinished:** run `node scripts/validate-setup.mjs` (it FAILS on
+"Your courses" until the real list replaces the example cast) and resume with the
+onboarding agent at Step 6 of `docs/SETUP.md`.*
+
 **Configured:** [NOT SET — type "hey" to run setup]
 **Timezone:** [NOT SET]
 **School:** [NOT SET]

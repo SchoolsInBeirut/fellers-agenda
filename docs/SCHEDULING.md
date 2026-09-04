@@ -45,7 +45,9 @@ that starts three minutes late is a run that starts.
 scripts\install-tasks.cmd
 ```
 
-That is the whole thing. It:
+`npm run setup` offers to run exactly this for you, as its last step, after
+listing the five tasks and telling you no administrator rights are needed. Either
+way it is the same installer, and running it twice is harmless. It:
 
 - reads `scheduler` from `config.json` (falling back to the shipped defaults)
 - **verifies every target file exists before registering anything** — `schtasks`
@@ -120,11 +122,16 @@ It is a bounded ring buffer, so it cannot grow without limit.
 
 ## macOS
 
-**There is no installer here, so ask the agent to write these files for you.**
-Say *"set up scheduling"* in Claude Code: it knows the repository's real path,
-it can substitute it, and it can write both plists and run `launchctl` for you.
-Everything below is what it produces, and what to check if you would rather do
-it by hand.
+**There is no installer here — `npm run setup` writes these files for you.** Its
+last step prints all three plists with **your** clone's absolute path already
+substituted for the `$HOME/my-agenda` placeholder, and offers to write them into
+`~/Library/LaunchAgents/` and `launchctl load` each one. Say no and it prints the
+`launchctl` commands instead.
+
+You can also ask the agent — say *"set up scheduling"* in Claude Code — or do it
+by hand from what follows. All three routes produce the same files, and the
+substituted path is the point: a `launchd` job with a wrong `cd` fails silently
+and looks perfectly installed.
 
 Two `launchd` agents. The first is
 `~/Library/LaunchAgents/com.agenda.heavy.plist`:
@@ -239,25 +246,37 @@ Apple Calendar.
 
 ## Linux
 
-**Ask the agent to write this for you** — say *"set up scheduling"*. It knows the
-clone's real path and can produce the block with `AGENDA` already filled in.
-What follows is what it writes.
+**`npm run setup` prints this block for you**, with `AGENDA=` already set to this
+clone's absolute path and the times taken from your `scheduler` config. Paste it
+into `crontab -e`. (It prints rather than installs: a crontab is a single
+per-user file that may already hold other people's jobs, and appending to it
+behind your back is not a thing a setup script should do.)
+
+You can also ask the agent — say *"set up scheduling"* — or write it by hand from
+what follows.
 
 `cron` with an explicit `PATH`, because cron's environment is nearly empty and
 `claude` will not be found otherwise:
 
 ```cron
 PATH=/usr/local/bin:/usr/bin:/bin:/home/you/.local/bin
-AGENDA=/home/you/my-agenda
+AGENDA="/home/you/my-agenda"
 
-3  7  * * * cd $AGENDA && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
-7 18  * * * cd $AGENDA && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
-0 9-23/2 * * * cd $AGENDA && claude -p "Read runbooks/sync-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
-4  *  * * * cd $AGENDA && node src/auth-retry.mjs >> data/runlog-stdout.txt 2>&1
+3  7  * * * cd "$AGENDA" && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
+7 18  * * * cd "$AGENDA" && claude -p "Read runbooks/heavy-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__brightspace__*,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
+0 9-23/2 * * * cd "$AGENDA" && claude -p "Read runbooks/sync-run.md and follow its instructions exactly." --allowedTools "Bash,Read,Write,Edit,Glob,Grep,ToolSearch,PushNotification,mcp__claude_ai_Google_Drive__*" >> data/runlog-stdout.txt 2>&1
+4  *  * * * cd "$AGENDA" && node src/auth-retry.mjs >> data/runlog-stdout.txt 2>&1
 ```
 
-Both `PATH` and `AGENDA` are placeholders. Install it with `crontab -e`, and
-check it took with `crontab -l`.
+`AGENDA` is filled in for you by `npm run setup`; `PATH` is still a placeholder
+— widen it if your `claude` lives somewhere else, such as `~/.local/bin`. Install
+it with `crontab -e`, and check it took with `crontab -l`.
+
+**Both quotes matter.** cron word-splits an unquoted assignment, so a clone in
+`~/my agenda` becomes `AGENDA=/home/you/my` with a stray `agenda`, `cd` then
+fails on a path that does not exist, and `&&` swallows the rest of the line. The
+crontab looks perfectly installed and no digest ever arrives. If you write these
+lines by hand, keep `AGENDA="…"` and `cd "$AGENDA"` exactly as they are.
 
 The last line is the auth lane. It is a plain Node script rather than an agent
 session, so it needs no `--allowedTools` and no Claude session at all; on all but
