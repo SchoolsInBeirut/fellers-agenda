@@ -12,68 +12,82 @@ a Google Doc.**
 
 ```mermaid
 flowchart TD
+  LAUNCH["scripts/run-daily.mjs<br/>one scheduled task, once a day"] --> P1
   subgraph sources["Sources (adapters, each optional)"]
     LMS["LMS<br/>Brightspace / Canvas"]
     MAIL["Mail<br/>Outlook (Windows)"]
     BOARD["Board<br/>GitHub"]
     GRADES["Grades<br/>Gradescope (extra)"]
   end
+  P1["pipeline.mjs --phase 1<br/>fetch and ingest"] --> SCRAPE
   LMS --> SCRAPE
   MAIL --> SCRAPE
   BOARD --> SCRAPE
   GRADES --> SCRAPE
   SCRAPE["scrape.mjs<br/>registry + merge chain"] --> LATEST[("data/latest.json")]
+  FEEDS["your own calendar<br/>(ICS feed URLs)"] -->|gcal-sync.mjs| GCAL[("data/gcal-items.json")]
+  P1 --> WO[("data/work-order.json<br/>~10 KB, the only thing the model reads")]
+  WO --> LLM["the model window<br/>claude -p runbooks/daily-agent.md<br/>Bash · Read · Write · PushNotification<br/>no connectors"]
+  LLM --> ANSWERS[("triage.json · descriptions.json<br/>digest.md · llm-notes.json")]
+  ANSWERS -->|mail-triage.mjs / describe.mjs --apply| STATE
+  LLM --> P2
   LATEST --> RENDER
-  STATE[("user state<br/>marks · blocks · study log")] --> RENDER
+  STATE[("user state<br/>marks · blocks · study log · descriptions")] --> RENDER
   MODEL["study-model.mjs<br/>how much each course deserves"] --> RENDER
   FOCUS["focus-engine.mjs<br/>deterministic planner"] --> RENDER
-  CAL["your own calendar<br/>(a connector YOU authorized)"] -->|agent saves the answer verbatim| RAW[("data/tmp/gcal-raw.json")]
-  RAW -->|gcal-ingest.mjs| GCAL[("data/gcal-items.json")]
   GCAL --> FOCUS
   GCAL --> RENDER
+  P2["pipeline.mjs --phase 2<br/>render, publish, watchdogs"] --> RENDER
   RENDER["render.mjs"] --> B64[("data/payload.b64.txt<br/>AGD2 · gzip + crc32")]
   RENDER --> HTML[("agenda.html<br/>AGD1 embedded")]
-  B64 -->|agent uploads| DOC["Drive doc: ns-data"]
+  B64 -->|drive-rclone.mjs publish · rclone CLI| DOC["Drive doc: ns-data<br/>updated in place, verified by read-back"]
   HTML -->|published once| PAGE["claude.ai Artifact"]
   DOC -->|page reads on load & refresh| PAGE
   PAGE -->|marks, 4s debounce| COMP["Drive doc: ns-completions<br/>AGC1"]
   PAGE -->|drags, 3s debounce| CMD["Drive doc: ns-commands<br/>AGQ1"]
-  COMP -->|completion.mjs --ingest| STATE
-  CMD -->|command-ingest.mjs --apply| STATE
-  RENDER --> SINKS["Calendar sink (optional)<br/>Outlook · ICS file"]
+  COMP -->|phase 1: rclone pull, completion.mjs --ingest| STATE
+  CMD -->|phase 1: rclone pull, command-ingest.mjs --apply| STATE
+  P2 --> SINKS["Calendar sink (optional)<br/>Outlook · ICS file"]
   SINKS --> DEADMAN["dead-man's switch<br/>(Outlook sink only)"]
 ```
 
 ---
 
-## The two lanes
+## The daily run
 
-There are exactly two kinds of run, and they exist because scraping is slow and
-the phone is impatient.
+There is exactly **one** kind of run. It fires once a day at `scheduler.dailyAt`
+(10:30 by default), and it is a Node launcher — `scripts/run-daily.mjs` — that
+calls five things in order:
 
-| | **Heavy run** | **Light sync run** |
-|---|---|---|
-| **How often** | Twice a day | Every two hours, in waking hours |
-| **Budget** | Ten minutes, occasionally more | **Two minutes** |
-| **Scrapes?** | Yes — everything | **Never** (one exception: the inbound calendar, which is a single connector call) |
-| **Writes descriptions?** | Yes, for new items only | No |
-| **Mirrors state?** | Yes | No |
-| **Email?** | The morning digest, at most one | **Never** |
-| **Push?** | At most one | At most one, and zero is expected |
-| **Runbook** | `runbooks/heavy-run.md` | `runbooks/sync-run.md` |
+| # | Step | What it is | What it does |
+|---|---|---|---|
+| 1 | `pipeline.mjs --phase 1` | script | scrape, mail, board, materials, the Drive pull of marks and commands, the inbound calendar, the study model, the gaps list, the behind verdict — then it writes `data/work-order.json` |
+| 2 | the model window | `claude -p` | reads the work order, triages mail, writes descriptions, maybe writes the digest, then runs steps 3 and 4 itself |
+| 3 | `pipeline.mjs --phase 2` | script | render, publish to Drive, mirror, calendar sink, digest, dead-man's switch, report |
+| 4 | `pipeline.mjs --finish` | script | one line in `data/runlog.txt` |
+| 5 | `pipeline.mjs --usage` | script | one record in `data/llm-usage.jsonl` |
 
-The light lane exists for one reason: **a mark the user saves at 14:00 should not
-have to wait until the evening to show up on their own page.** It picks up
-commands and completions from Drive, re-runs the model and the planner,
-re-renders, re-publishes, and stops. It is not a small version of the heavy run —
-it deliberately cannot scrape, so it can never be slow and can never fail on
-authentication.
+**Steps 3 and 4 are idempotent, and the launcher calls them anyway.** In a healthy
+run the model has already done them and the launcher's calls print `already-done`.
+That redundancy is the design: if `claude` is missing, fails, or runs past
+`llm.timeoutMinutes`, the launcher finishes the run itself, the page still
+updates, and the run log carries `llm=absent`. A model outage is not an agenda
+outage.
 
-**Both lanes are non-fatal step by step.** A run that finishes with six
-`SKIPPED` tokens is a success. A run that dies in the middle and writes nothing
-is the only real failure. That is why the last step of every runbook is "write
-the log line", and why an agent is told to reach it even when it is stopping
-early.
+**Phase 1 is a hard dependency; everything after it is not.** A phase 2 with no
+fresh phase 1 refuses and exits 4, because publishing a render of stale inputs is
+worse than publishing nothing.
+
+Version 1.x ran two heavy runs and eight light sync runs a day, each an agent
+session with every connector loaded, and it cost about 560,000 model output
+tokens a day — 84% of it the model re-typing bytes into a Drive document.
+`docs/design-notes/daily-run.md` has the measurements, the rewrite and what to
+watch.
+
+**Every step is non-fatal on its own.** A run that finishes with six `SKIPPED`
+tokens is a success. A run that dies in the middle and writes nothing is the only
+real failure. That is why `--finish` exists as its own step, and why both the
+model and the launcher are told to reach it even when things went wrong.
 
 ---
 
@@ -211,11 +225,11 @@ not*. See `docs/design-notes/data-truth.md`.
 
 - **`agenda.html`** — the page with a **plain** `AGD1.` envelope embedded, so it
   paints instantly and works with no network at all.
-- **`data/payload.b64.txt`** — the whole `<ns>-data` document an agent uploads
-  to Drive: the same payload as a **gzipped, CRC-guarded** `AGD2.` envelope, a
-  blank line, and then a **plain-text brief** (`src/brief.mjs`) for a phone to
-  read. Every machine reader stops at the first `.END`, so the brief is invisible
-  to the page; `docs/PHONE.md` is what reads it.
+- **`data/payload.b64.txt`** — the whole `<ns>-data` document, which
+  `src/drive-rclone.mjs` uploads to Drive: the same payload as a **gzipped,
+  CRC-guarded** `AGD2.` envelope, a blank line, and then a **plain-text brief**
+  (`src/brief.mjs`) for a phone to read. Every machine reader stops at the first
+  `.END`, so the brief is invisible to the page; `docs/PHONE.md` is what reads it.
 
 You publish `agenda.html` once as a Claude Artifact. From then on the page
 **fetches its own data** from a Google Doc on load and on refresh, which is what
@@ -225,44 +239,58 @@ Four documents, four exact titles, three owners:
 
 | Title | Written by | Read by |
 |---|---|---|
-| `<ns>-data` | a run, from `payload.b64.txt` | the page |
-| `<ns>-mirror` | a heavy run, from `backup.b64.txt` | nothing — it is insurance |
+| `<ns>-data` | phase 2, from `payload.b64.txt` | the page |
+| `<ns>-mirror` | phase 2, from `backup.b64.txt` | nothing — it is insurance |
 | `<ns>-completions` | **the page**, when you tick something | `completion.mjs --ingest` |
 | `<ns>-commands` | **the page**, when you drag a block | `command-ingest.mjs --apply` |
 
-### Every Drive write is create-then-trash, in that order
+### The pipeline writes Drive over `rclone`, and verifies every write
 
-**`update_file` on this connector is metadata-only.** It cannot replace a
-document's body. So the only way to publish new content is `create_file`, then
-`trash_file` on the older documents of the same title, **matched by id.**
+`src/drive-rclone.mjs` shells out to the `rclone` command-line program. No model
+is in that path: the payload goes from a local file to a Google Doc as bytes, and
+costs nothing to move.
 
-Create first, trash second, **always**:
+Each publish is three steps:
 
-- If the create fails and you trashed first, the page is now reading nothing.
-- If the create fails and you trashed nothing, the page keeps reading the
-  document that is already there, one cycle stale. Which is fine.
+1. **Update in place.** `copyto` replaces the body of the *same* document, so its
+   id never changes. The page's read — search by title, newest `modifiedTime`,
+   read the body — finds exactly what it found yesterday.
+2. **Read it back.** The document is exported again and compared with the local
+   envelope. A publish is only `ok` when those match *and* the envelope unpacks.
+3. **Self-heal on a bad verify.** The payload is re-uploaded from
+   `data/payload.last-good.txt` and the run logs
+   `drive=FAILED(verify;restored-last-good)`. The page keeps reading a whole week
+   rather than half of one — and the token says `restore-failed` instead when the
+   re-upload could not happen either, rather than claiming a repair it did not
+   make.
 
-And never across titles. Trashing a `<ns>-completions` document while rotating
-`<ns>-data` destroys a mark the user made, and nobody will ever know it happened.
+**Nothing is trashed.** A completions or commands document the pipeline has
+consumed is **moved** into a `<ns>-consumed` folder and purged after seven days,
+so a mark consumed in error is recoverable for a week. The page **only ever
+creates**; cleanup is a pipeline job, because only the pipeline knows what it has
+consumed.
 
-**The page only ever creates. It never trashes anything.** Cleanup is a
-pipeline job, because only the pipeline knows what it has consumed.
+If you are upgrading from 1.x, the first publish tidies the duplicate documents
+that era's create-then-trash cycle left behind: everything but the newest of each
+title is moved to `<ns>-consumed`, and the run logs `;deduped=N`.
 
-### Why the payload is compressed
+### Why the payload is still compressed
 
-The agent has to *type* the payload into a document — there is no upload API in
-this path, so the model is unavoidably the byte transport. An uncompressed
-payload was about 65,000 base64 characters: roughly 185k tokens to read and 185k
-more to emit, which is past a context window. Runs failed.
+In 1.x the model had to *type* the payload into a document, so every character
+cost tokens twice. That is no longer true — `rclone` moves the bytes — but the
+compression stayed, for three reasons that have nothing to do with the model:
 
-Gzip before base64 on JSON with highly repeated keys compresses about six times.
-With the slim tiers on top, a run's upload is around **6,700 characters — a
->9× reduction** that fits in one message with room to spare.
+- a Google Doc holding 65,000 characters of base64 is slower for the page to
+  fetch and parse than one holding 6,700
+- the CRC-32 is a real integrity check on a document a human can open and
+  accidentally edit
+- the page template did not change in 2.0.0, and it reads `AGD2.`
 
-The CRC-32 exists because the realistic corruption mode is a truncated or
-mistyped transcription, and **a truncated gzip stream can still start
-decompressing** — so without a checksum a torn payload would produce plausible
-partial data instead of an error.
+Gzip before base64 on JSON with highly repeated keys compresses about six times;
+with the slim tiers on top a run's upload is around **6,700 characters.** The
+CRC-32 exists because **a truncated gzip stream can still start decompressing** —
+so without a checksum a torn payload would produce plausible partial data instead
+of an error.
 
 Full spec: `docs/PROTOCOL.md`.
 
@@ -303,9 +331,11 @@ Every alarm assumes the run happens, and happens well, so three independent
 things watch for the cases where it does not:
 
 - **`stale-check.mjs`** runs *inside* the machine, on logon, unlock, resume and
-  every 30 minutes. It catches a machine that was merely **asleep** at a
-  boundary, and starts the missed scheduled task.
-- **`deadman.mjs`** plants a calendar event 26 hours out through the **Outlook**
+  every 30 minutes. It catches a machine that was merely **asleep** at the daily
+  boundary, and starts the missed scheduled task. One run a day means one
+  boundary to miss, and missing it means missing the day — so this lane matters
+  more in 2.0.0 than it did when there were ten chances.
+- **`deadman.mjs`** plants a calendar event 30 hours out through the **Outlook**
   sink, deleted and replanted by every successful run. It catches a machine that
   is **gone**, and it fires from a calendar service rather than from the machine
   that stopped.
@@ -315,7 +345,7 @@ things watch for the cases where it does not:
   fired exactly on time, hit an expired session, spent its one permitted re-auth,
   and stopped. That run happened and that machine is alive, so neither of the
   others has anything to say, and without this lane the retry interval for a
-  broken login is the gap to the next heavy run.
+  broken login is **a whole day**, because the next run is tomorrow.
 
 Each one's blind spot is another one's purpose.
 
@@ -346,8 +376,10 @@ not an aesthetic preference; it buys four specific things:
    at a fixed instant, so its output can be diffed.
 2. **A wrong number is a bug with a location.** "The weight is wrong" points at
    `study-model.mjs` and its evidence strings, not at a prompt.
-3. **Cost and latency are bounded.** The two-minute sync lane is two minutes
-   because almost nothing in it is a model call.
+3. **Cost and latency are bounded.** One model window a day, 8–13 turns, under
+   10,000 output tokens — because almost nothing in a run is a model call, and
+   the model reads one 10 KB work order rather than a connector's worth of
+   schema. `data/llm-usage.jsonl` is the receipt.
 4. **Untrusted input cannot reach a decision.** Assignment titles and
    announcement bodies are written by other people. They flow into a *renderer*,
    not into a scheduler. A malicious string can appear on the page; it cannot
@@ -358,8 +390,14 @@ What the model does, and only this:
 - **Triage** — reading an email body and deciding it carries a real deadline
 - **Describe** — writing the one-to-three sentences that make a card mean
   something
-- **Transport** — moving the payload into Drive, because that path has no API
-- **Report** — saying, in plain English, what changed
+- **Report** — writing the digest and the verify note, in plain English
+
+**Transport used to be on that list and is not any more.** Moving the payload
+into Drive was 84% of what a 1.x run spent its tokens on; `rclone` does it now,
+and `docs/design-notes/daily-run.md` is the whole argument. The model window is
+launched with four built-in tools and **no connectors at all**, so it cannot
+scrape, cannot authenticate and cannot touch Drive — those are properties of how
+it is started, not promises in a runbook.
 
 The model never computes a schedule, never decides whether the user is behind,
 and never edits a number the pipeline produced.

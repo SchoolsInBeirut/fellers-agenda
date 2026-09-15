@@ -1,3 +1,22 @@
+> # RETIRED IN 2.0.0 — nothing reads this file
+>
+> The two-hourly light run is gone. There is **one daily run** now:
+> `scripts/run-daily.mjs` drives `src/pipeline.mjs` and a single model window
+> that reads `runbooks/daily-agent.md`. No scheduled task points at this file,
+> and the launcher it named (`scripts/run-sync.cmd`) has been deleted.
+>
+> It is kept for its reasoning about the fast loop — what a run may do when it is
+> forbidden to scrape, and why. Phase 1 of the daily run picks up the same
+> completions and command documents this file did, and it does so without a
+> model.
+>
+> - What a run does today: [`runbooks/daily-agent.md`](../daily-agent.md)
+> - Why it was rebuilt, with the numbers: [`docs/design-notes/daily-run.md`](../../docs/design-notes/daily-run.md)
+>
+> Everything below this line describes the 1.x world and is **not** current.
+
+---
+
 # Light sync run — the two-minute loop
 
 You are the agenda **sync** agent. Work from the repository root — every path

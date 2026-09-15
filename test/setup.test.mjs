@@ -33,12 +33,26 @@ import { checkGcal } from "../scripts/lib/setup-gcal.mjs";
 import { makePrinter, makeRunner, probe, stop } from "../scripts/lib/setup-io.mjs";
 import { checkMachine, NODE_MIN } from "../scripts/lib/setup-machine.mjs";
 import { FIELDS, PENDING, SENTINEL, SENTINEL_PREFIX, fieldValues, fillSentinels, hasSentinels, isoDate, readFields } from "../scripts/lib/setup-claudemd.mjs";
-import { SCHEDULER_DEFAULTS, parseHM, schedulePlan, syncEveryHours } from "../scripts/lib/setup-schedule.mjs";
-import { isExpectedFail, nextSteps, openCommand, parseFails } from "../scripts/lib/setup-report.mjs";
+import { SCHEDULER_DEFAULTS, parseHM, schedulePlan } from "../scripts/lib/setup-schedule.mjs";
+import { isExpectedFail, nextSteps, openCommand, parseFails, RCLONE_INSTALL, rcloneConsent, rcloneSteps } from "../scripts/lib/setup-report.mjs";
 import { askChoice, askUntil, makeAsk, yesNo, TRIES } from "../scripts/lib/setup-ask.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
+
+/**
+ * Remove a scratch directory. Windows can keep a just-rewritten directory open
+ * for a moment (the indexer, an antivirus scan), and a leftover temp dir is not
+ * a wizard defect - so retry for a few seconds, then warn rather than fail a
+ * test whose assertions already passed.
+ */
+function cleanup(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (e) {
+    console.warn(`[setup.test] could not remove ${dir}: ${e.code ?? e.message}`);
+  }
+}
 const EXAMPLE = readJson(join(REPO, "config.example.json"));
 const CLAUDE_MD = readFileSync(join(REPO, "CLAUDE.md"), "utf8");
 
@@ -588,10 +602,23 @@ describe("setup: the schedule plan", () => {
     assert.equal(plan.kind, "windows");
     assert.deepEqual(plan.commands, ["scripts\\install-tasks.cmd"]);
     assert.deepEqual(plan.files, [], "nothing is generated - install-tasks.cmd owns Task Scheduler");
-    assert.equal(plan.tasks.length, 5, "docs/SCHEDULING.md documents five tasks");
-    for (const name of ["Morning", "Evening", "Sync", "StaleCheck", "AuthRetry"]) {
+    assert.equal(plan.tasks.length, 3, "docs/SCHEDULING.md documents three tasks");
+    for (const name of ["Daily", "StaleCheck", "AuthRetry"]) {
       assert.ok(plan.tasks.some((t) => t.startsWith(`Agenda ${name}`)), `no task for ${name}`);
     }
+    assert.ok(plan.tasks[0].includes("run-daily.cmd"), "the daily task runs the launcher, not a model");
+    assert.ok(plan.tasks[0].includes("10:30"));
+    for (const gone of ["Agenda Morning", "Agenda Evening", "Agenda Sync"]) {
+      assert.ok(!plan.tasks.some((t) => t.startsWith(gone)), `${gone} is retired and must not be installed`);
+    }
+  });
+
+  it("Windows tells an upgrader what to do about the three retired tasks", () => {
+    // Left registered they point at launchers 2.0.0 deleted, and fail daily.
+    // Deleted without being asked, an installer has reached outside its brief.
+    const notes = schedulePlan("win32", "C:\\x", cfg).notes.join(" ");
+    assert.ok(notes.includes("Agenda Morning"), notes);
+    assert.ok(notes.includes("/remove-legacy"), notes);
   });
 
   it("Windows task names follow scheduler.taskPrefix", () => {
@@ -599,12 +626,11 @@ describe("setup: the schedule plan", () => {
     assert.ok(plan.tasks.every((t) => t.startsWith("Study ")));
   });
 
-  it("macOS writes the three documented plists with THIS checkout's path", () => {
+  it("macOS writes the two documented plists with THIS checkout's path", () => {
     const plan = schedulePlan("darwin", "/Users/student/my-agenda", cfg);
     assert.equal(plan.kind, "launchd");
     assert.deepEqual(plan.files.map((f) => f.path), [
-      "~/Library/LaunchAgents/com.agenda.heavy.plist",
-      "~/Library/LaunchAgents/com.agenda.sync.plist",
+      "~/Library/LaunchAgents/com.agenda.daily.plist",
       "~/Library/LaunchAgents/com.agenda.auth.plist",
     ]);
     for (const f of plan.files) {
@@ -612,42 +638,46 @@ describe("setup: the schedule plan", () => {
       assert.ok(!f.content.includes("$HOME/my-agenda"), `${f.path} still has the doc's placeholder`);
       assert.ok(f.content.startsWith('<?xml version="1.0"'), `${f.path} is not a plist`);
     }
-    const heavy = plan.files[0].content;
-    assert.ok(heavy.includes("<key>Hour</key><integer>7</integer><key>Minute</key><integer>3</integer>"));
-    assert.ok(heavy.includes("<key>Hour</key><integer>18</integer><key>Minute</key><integer>7</integer>"));
-    assert.ok(heavy.includes("&amp;&amp;"), "&& must be XML-escaped inside a plist string");
-    assert.ok(heavy.includes("runbooks/heavy-run.md"));
-    assert.ok(plan.files[1].content.includes("runbooks/sync-run.md"));
-    assert.ok(plan.files[2].content.includes("node src/auth-retry.mjs"));
-    assert.ok(plan.files[2].content.includes("<key>RunAtLoad</key><true/>"), "the auth lane runs at load; the other two do not");
-    assert.ok(plan.files[0].content.includes("<key>RunAtLoad</key><false/>"));
+    const daily = plan.files[0].content;
+    assert.ok(daily.includes("<key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer>"));
+    assert.ok(daily.includes("&amp;&amp;"), "&& must be XML-escaped inside a plist string");
+    assert.ok(daily.includes("node scripts/run-daily.mjs"));
+    assert.ok(daily.includes("data/runlog-stdout.txt"));
+    assert.ok(plan.files[1].content.includes("node src/auth-retry.mjs"));
+    assert.ok(plan.files[1].content.includes("<key>RunAtLoad</key><true/>"), "the auth lane runs at load; the daily run does not");
+    assert.ok(daily.includes("<key>RunAtLoad</key><false/>"));
     assert.ok(plan.commands.some((c) => c.startsWith("launchctl load")));
   });
 
-  it("the macOS sync lane cannot reach the LMS or a mailbox", () => {
-    const sync = schedulePlan("darwin", "/Users/s/a", cfg).files[1].content;
-    assert.ok(!sync.includes("mcp__brightspace__"), "the sync lane never scrapes, so it has no business reaching the LMS");
-    assert.ok(!sync.includes("mcp__claude_ai_Gmail__"));
-    assert.ok(sync.includes("mcp__claude_ai_Google_Drive__*"));
+  it("no platform hands a tool allow-list to the scheduler any more", () => {
+    // 1.x pasted `claude -p --allowedTools ...` into every plist and cron line,
+    // and the three drifted apart. scripts/run-daily.mjs owns the model window
+    // now, so nothing here may name a tool, a model or a runbook.
+    for (const p of ["darwin", "linux"]) {
+      const text = schedulePlan(p, "/Users/s/a", cfg).files.map((f) => f.content).join("\n");
+      assert.ok(!text.includes("claude -p"), `${p} still schedules the model directly`);
+      assert.ok(!text.includes("mcp__"), `${p} still carries an MCP allow-list`);
+      assert.ok(!text.includes("--allowedTools"), `${p} still carries a tool allow-list`);
+      assert.ok(!text.includes("runbooks/"), `${p} still names a runbook the launcher owns`);
+    }
   });
 
-  it("Linux writes the four documented cron lines against a real AGENDA path", () => {
+  it("Linux writes the two documented cron lines against a real AGENDA path", () => {
     const plan = schedulePlan("linux", "/home/student/my-agenda", cfg);
     assert.equal(plan.kind, "cron");
     const text = plan.files[0].content;
     assert.ok(text.includes('AGENDA="/home/student/my-agenda"'));
     assert.ok(text.includes("PATH=/usr/local/bin:/usr/bin:/bin"), "cron's environment is nearly empty");
-    assert.ok(text.includes('3 7 * * * cd "$AGENDA" && claude -p'));
-    assert.ok(text.includes('7 18 * * * cd "$AGENDA" && claude -p'));
-    assert.ok(text.includes('0 9-23/2 * * * cd "$AGENDA" && claude -p'));
+    assert.ok(text.includes('30 10 * * * cd "$AGENDA" && node scripts/run-daily.mjs >> data/runlog-stdout.txt 2>&1'));
     assert.ok(text.includes('4 * * * * cd "$AGENDA" && node src/auth-retry.mjs'));
+    assert.equal(text.split("\n").filter((l) => /^[0-9]/.test(l)).length, 2, "two jobs, not four");
     assert.ok(plan.commands.some((c) => c.startsWith("crontab -e")));
   });
 
   it("a clone path with a space still produces cron jobs that run", () => {
     // cron word-splits an unquoted assignment, `cd` then fails on half a path,
     // and `&&` swallows the rest of the line. Nothing is printed anywhere: the
-    // crontab looks perfectly installed and no digest ever arrives.
+    // crontab looks perfectly installed and no agenda ever arrives.
     const text = schedulePlan("linux", "/home/sam/my agenda", {}).files[0].content;
     assert.ok(text.includes('AGENDA="/home/sam/my agenda"'), `AGENDA must be quoted:\n${text}`);
     assert.ok(!/cd \$AGENDA(?!")/.test(text), `every cd must quote $AGENDA:\n${text}`);
@@ -662,12 +692,15 @@ describe("setup: the schedule plan", () => {
     }
   });
 
-  it("changed times reach the generated files", () => {
-    const cfg2 = { scheduler: { ...SCHEDULER_DEFAULTS, morningAt: "06:15", eveningAt: "20:45", syncWindow: ["10:00", "22:00"], syncGapHours: 5 } };
+  it("a changed dailyAt reaches every generated file", () => {
+    const cfg2 = { scheduler: { ...SCHEDULER_DEFAULTS, dailyAt: "06:15" } };
     assert.ok(schedulePlan("linux", "/a", cfg2).files[0].content.includes("15 6 * * *"));
-    assert.ok(schedulePlan("linux", "/a", cfg2).files[0].content.includes("45 20 * * *"));
-    assert.ok(schedulePlan("linux", "/a", cfg2).files[0].content.includes("0 10-22/4 * * *"));
-    assert.ok(schedulePlan("darwin", "/a", cfg2).files[1].content.includes("<key>StartInterval</key><integer>14400</integer>"));
+    assert.ok(
+      schedulePlan("darwin", "/a", cfg2).files[0].content.includes(
+        "<key>Hour</key><integer>6</integer><key>Minute</key><integer>15</integer>",
+      ),
+    );
+    assert.ok(schedulePlan("win32", "C:\\a", cfg2).tasks[0].includes("06:15"));
   });
 
   it("an undocumented platform generates nothing rather than guessing", () => {
@@ -679,17 +712,21 @@ describe("setup: the schedule plan", () => {
   });
 
   it("a missing or malformed scheduler block falls back to the shipped defaults", () => {
-    assert.ok(schedulePlan("linux", "/a", {}).files[0].content.includes("3 7 * * *"));
-    assert.ok(schedulePlan("linux", "/a", { scheduler: { morningAt: "nope" } }).files[0].content.includes("3 7 * * *"));
-    assert.ok(schedulePlan("linux", "/a", { scheduler: { morningAt: "25:99" } }).files[0].content.includes("3 7 * * *"));
+    assert.ok(schedulePlan("linux", "/a", {}).files[0].content.includes("30 10 * * *"));
+    assert.ok(schedulePlan("linux", "/a", { scheduler: { dailyAt: "nope" } }).files[0].content.includes("30 10 * * *"));
+    assert.ok(schedulePlan("linux", "/a", { scheduler: { dailyAt: "25:99" } }).files[0].content.includes("30 10 * * *"));
   });
 
-  it("the sync step matches the arithmetic install-tasks.cmd uses", () => {
-    assert.equal(syncEveryHours(3), 2);
-    assert.equal(syncEveryHours(1), 1, "never zero - that would be a trigger every no time at all");
-    assert.equal(syncEveryHours(undefined), 2);
-    assert.deepEqual(parseHM("07:03", "00:00"), { h: 7, m: 3 });
-    assert.deepEqual(parseHM("bad", "07:03"), { h: 7, m: 3 });
+  it("a config still carrying the 1.x keys schedules one run, not three", () => {
+    const legacy = {
+      scheduler: { taskPrefix: "Agenda", morningAt: "07:03", eveningAt: "18:07", syncWindow: ["09:00", "23:00"], syncGapHours: 3 },
+    };
+    const text = schedulePlan("linux", "/a", legacy).files[0].content;
+    assert.ok(text.includes("30 10 * * *"), text);
+    assert.ok(!text.includes("3 7 * * *"), "morningAt names a lane that no longer exists");
+    assert.equal(schedulePlan("win32", "C:\\a", legacy).tasks.length, 3);
+    assert.deepEqual(parseHM("10:30", "00:00"), { h: 10, m: 30 });
+    assert.deepEqual(parseHM("bad", "10:30"), { h: 10, m: 30 });
   });
 
   it("the shipped scheduler defaults match config.example.json", () => {
@@ -715,9 +752,13 @@ describe("setup: reading the preflight, and the closing summary", () => {
     assert.equal(isExpectedFail("Your courses"), true);
     assert.equal(isExpectedFail("An LMS source is enabled"), true);
     assert.equal(isExpectedFail("lms-canvas can run here"), true);
+    // rclone needs an install and ONE consent click in a browser. A wizard
+    // cannot click Allow, so handing this over is the CORRECT end of setup.
+    assert.equal(isExpectedFail("Drive transport (rclone)"), true);
     assert.equal(isExpectedFail("data/ is writable"), false, "an unwritable data/ is a real problem");
     assert.equal(isExpectedFail("Config validation"), false, "a config that will not load is a real problem");
     assert.equal(isExpectedFail("Repository layout"), false);
+    assert.equal(isExpectedFail("The model window"), false, "an unset llm.model is a real problem");
   });
 
   it("the closing summary names every human step and its doc section", () => {
@@ -761,6 +802,58 @@ describe("setup: reading the preflight, and the closing summary", () => {
   it("says so when Claude Code is missing, because three of the five steps need it", () => {
     assert.ok(nextSteps({ fails: [] }, { claude: false }).join("\n").includes("claude.com/claude-code"));
     assert.ok(!nextSteps({ fails: [] }, { claude: true }).join("\n").includes("Claude Code is not installed"));
+  });
+
+  // -------------------------------------------------------------------------
+  //  Drive over rclone
+  //
+  //  Two things the wizard can only ever PRINT: a package install, and a Google
+  //  consent screen. The one rule these tests defend is the second one - a
+  //  setup run with --yes in a terminal nobody is watching must never start a
+  //  command that opens a browser and blocks on a human.
+  // -------------------------------------------------------------------------
+  const DRIVE_ON = { drive: { enabled: true, rcloneRemote: "agenda" } };
+
+  it("the Drive step prints the install line for a machine with no rclone", () => {
+    const text = rcloneSteps("win32", DRIVE_ON, null).join("\n");
+    assert.ok(text.includes("rclone is not installed"));
+    assert.ok(text.includes(RCLONE_INSTALL.win32), text);
+    assert.ok(text.includes("rclone config create agenda drive scope=drive"));
+    assert.ok(text.includes("node src/drive-rclone.mjs status"));
+    for (const [p, line] of Object.entries(RCLONE_INSTALL)) {
+      assert.ok(rcloneSteps(p, DRIVE_ON, null).join("\n").includes(line), `${p} has no install line`);
+    }
+    assert.ok(rcloneSteps("sunos", DRIVE_ON, null).join("\n").includes("rclone.org/install"), "an unknown platform still gets a URL");
+  });
+
+  it("with rclone present it still only asks for the one consent click", () => {
+    const text = rcloneSteps("darwin", DRIVE_ON, "rclone v1.68.2").join("\n");
+    assert.ok(text.includes("rclone is installed: rclone v1.68.2"));
+    assert.ok(!text.includes(RCLONE_INSTALL.darwin), "do not tell somebody to install what they have");
+    assert.ok(text.includes(rcloneConsent("agenda")));
+  });
+
+  it("the consent command names the configured remote, never a hardcoded one", () => {
+    assert.equal(rcloneConsent("study"), "rclone config create study drive scope=drive");
+    const text = rcloneSteps("linux", { drive: { enabled: true, rcloneRemote: "study" } }, null).join("\n");
+    assert.ok(text.includes("rclone config create study drive scope=drive"), text);
+    // ...and an unset remote falls back to the documented default rather than
+    // printing `rclone config create undefined`.
+    assert.ok(rcloneSteps("linux", { drive: { enabled: true } }, null).join("\n").includes("create agenda drive"));
+  });
+
+  it("the Drive step says so and stops when Drive is off", () => {
+    const text = rcloneSteps("win32", { drive: { enabled: false } }, null).join("\n");
+    assert.ok(text.includes("off in config.json"));
+    assert.ok(!text.includes("rclone config create"), "nothing to consent to when nothing is published");
+    assert.ok(!rcloneSteps("win32", {}, null).join("\n").includes("rclone config create"));
+  });
+
+  it("the Drive step promises, in words, that it never runs the consent command", () => {
+    // A browser that opens and waits for a click is the one thing `npm run
+    // setup --yes` must not start. The user has to be able to read that here.
+    const text = rcloneSteps("win32", DRIVE_ON, "rclone v1.68.2").join("\n");
+    assert.match(text, /never runs the consent command/i);
   });
 
   it("openCommand knows each platform, and shrugs at one it does not", () => {
@@ -865,7 +958,7 @@ describe("setup: the shell launchers", () => {
       assert.equal(spaced.status, 0, spaced.stderr);
       assert.match(spaced.stdout, /argc=3\n<-->\n<--yes>\n<a b>/, "a quoted argument must arrive as one word");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 });
@@ -892,10 +985,16 @@ describe("setup: end to end", () => {
       windowsHide: true,
       // A CI runner's zone is whatever the image says; pin it so the assertion
       // below is about the wizard, not about the machine it happens to run on.
-      env: { ...process.env, TZ: "America/New_York" },
+      env: { ...process.env, TZ: "America/New_York", AGENDA_PREFLIGHT_NO_NETWORK: "1" },
     });
 
   const BASE = ["--yes", "--no-demo", "--skip-auth", "--skip-schedule"];
+
+  // No test may reach a network or spawn rclone, and the preflight's Drive
+  // check does both when rclone happens to be installed on the machine running
+  // the suite. This is the documented way out; `scripts/validate-setup.mjs`
+  // explains why the check exists at all.
+  const OFFLINE = { ...process.env, AGENDA_PREFLIGHT_NO_NETWORK: "1" };
 
   it("runs clean, writes a loadable config, and leaves no sentinel behind", { timeout: 120000 }, () => {
     const dir = stage();
@@ -912,7 +1011,7 @@ describe("setup: end to end", () => {
       // The preflight accepts it: the config loads and every enabled feature
       // has what it needs. The table still FAILs on "Your courses", which is
       // the correct handover - Step 6 needs a live LMS call.
-      const doctor = spawnSync(process.execPath, [join(dir, "scripts", "validate-setup.mjs")], { cwd: dir, encoding: "utf8", windowsHide: true });
+      const doctor = spawnSync(process.execPath, [join(dir, "scripts", "validate-setup.mjs")], { cwd: dir, encoding: "utf8", windowsHide: true, env: OFFLINE });
       assert.match(doctor.stdout, /PASS {2}Config validation/, doctor.stdout);
       assert.match(doctor.stdout, /PASS {2}config\.json/);
       assert.deepEqual(parseFails(doctor.stdout).filter((f) => !isExpectedFail(f)), [], doctor.stdout);
@@ -931,7 +1030,7 @@ describe("setup: end to end", () => {
       assert.match(r.stdout, /What happens next/);
       assert.match(r.stdout, /docs\/ARTIFACT\.md/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -946,7 +1045,7 @@ describe("setup: end to end", () => {
       assert.deepEqual(after2, after1, "a second run must be a no-op");
       assert.match(second.stdout, /Part 2 is already filled in/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -959,7 +1058,7 @@ describe("setup: end to end", () => {
       assert.ok(existsSync(join(dir, "config.json")), "--agent still writes the config");
       assert.match(r.stdout, /left the \[NOT SET\] block exactly as it is/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -971,7 +1070,7 @@ describe("setup: end to end", () => {
       assert.match(r.stderr, /unknown flag "--yolo"/);
       assert.equal(existsSync(join(dir, "config.json")), false, "nothing may be written before the arguments are understood");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -983,7 +1082,7 @@ describe("setup: end to end", () => {
       assert.match(r.stderr, /no terminal here/);
       assert.equal(existsSync(join(dir, "config.json")), false);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -1000,7 +1099,7 @@ describe("setup: end to end", () => {
       assert.equal(readJson(join(dir, "config.json")).namespace, "agenda", "an existing namespace is kept, always");
       assert.match(r.stdout, /Keeping the namespace/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -1010,7 +1109,7 @@ describe("setup: end to end", () => {
       assert.equal(runSetup(dir, BASE).status, 0);
       assert.equal(readJson(join(dir, "config.json")).namespace, basename(dir).toLowerCase());
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -1024,21 +1123,21 @@ describe("setup: end to end", () => {
         encoding: "utf8",
         windowsHide: true,
         input: "",
-        env: { ...process.env, TZ: "America/New_York", SETUP_FAKE_TTY: "1" },
+        env: { ...process.env, TZ: "America/New_York", SETUP_FAKE_TTY: "1", AGENDA_PREFLIGHT_NO_NETWORK: "1" },
       });
       assert.equal(r.status, 2, `exit ${r.status}\n${r.stdout}\n${r.stderr}`);
       assert.match(r.stderr, /setup stopped: no answer given/);
       assert.match(r.stderr, /--yes/, "it must name the way out");
       assert.equal(existsSync(join(dir, "config.json")), false, "no answer means nothing is written");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
   it("an unexpected preflight failure ends the wizard at exit 1, listed on its own", { timeout: 120000 }, () => {
     const dir = stage();
     try {
-      rmSync(join(dir, "fixtures", "demo"), { recursive: true, force: true });
+      cleanup(join(dir, "fixtures", "demo"));
       const r = runSetup(dir, BASE);
       assert.equal(r.status, 1, `exit ${r.status}\n${r.stdout}\n${r.stderr}`);
       const unexpected = r.stdout.split("\n").find((l) => l.includes("UNEXPECTED preflight failure")) ?? "";
@@ -1047,7 +1146,7 @@ describe("setup: end to end", () => {
       assert.ok(closed.includes("Your courses"), r.stdout);
       assert.ok(!closed.includes("Sample data for demo mode"), `the two lists must stay distinct:\n${r.stdout}`);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -1061,20 +1160,20 @@ describe("setup: end to end", () => {
         cwd: dir,
         encoding: "utf8",
         windowsHide: true,
-        env: { ...process.env, TZ: "America/New_York", npm_config_yes: "true" },
+        env: { ...process.env, TZ: "America/New_York", npm_config_yes: "true", AGENDA_PREFLIGHT_NO_NETWORK: "1" },
       });
       assert.equal(r.status, 1, `exit ${r.status}\n${r.stdout}\n${r.stderr}`);
       assert.match(r.stderr, /you passed --yes to npm, not to setup/);
       assert.match(r.stderr, /npm run setup -- --yes/);
       assert.equal(existsSync(join(dir, "config.json")), false, "it fails closed - it never guesses the flag was meant");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
   it("the preflight has a line for the inbound calendar, on or off", { timeout: 120000 }, () => {
     const dir = stage();
-    const doctor = () => spawnSync(process.execPath, [join(dir, "scripts", "validate-setup.mjs")], { cwd: dir, encoding: "utf8", windowsHide: true });
+    const doctor = () => spawnSync(process.execPath, [join(dir, "scripts", "validate-setup.mjs")], { cwd: dir, encoding: "utf8", windowsHide: true, env: OFFLINE });
     const setGcal = (gcal) => {
       const cfg = readJson(join(dir, "config.json"));
       writeFileSync(join(dir, "config.json"), `${JSON.stringify({ ...cfg, calendars: { gcal } }, null, 2)}\n`, "utf8");
@@ -1099,7 +1198,7 @@ describe("setup: end to end", () => {
       assert.match(bad.stdout, /FAIL {2}Config validation\s+.*calendars\.gcal\.feed/, bad.stdout);
       assert.ok(!/Inbound calendar/.test(bad.stdout), "no row may describe a config that did not load");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 
@@ -1111,7 +1210,7 @@ describe("setup: end to end", () => {
       assert.match(r.stdout, /npm run setup/);
       assert.equal(existsSync(join(dir, "config.json")), false);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup(dir);
     }
   });
 });

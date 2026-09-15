@@ -11,11 +11,23 @@
 // server on Windows (`cmd /c npx ...`), a Canvas server on a Mac (`uvx ...`)
 // and a recorded fake in a test, without any of them knowing about each other.
 //
+// CLOSING IT IS NOT `child.kill()`
+//
+// On Windows a server started as `cmd /c npx -y some-server` is a chain of four
+// processes: cmd -> npx -> cmd -> node. `child.kill()` ends the first one, the
+// other three keep the stdio pipes they inherited open, and node will not exit
+// while a pipe is open - so the scrape finishes, prints its summary, and then
+// hangs forever with nothing to say. That is the single failure that made runs
+// sit at 100% until a timeout killed them. `close()` therefore runs
+// `taskkill /T /F` on the whole tree first, then kills the child, then destroys
+// the pipes and unrefs. It is idempotent and it never throws: a close that
+// raises during cleanup would mask whatever the caller was already handling.
+//
 // Usage:
 //   const c = await connect({ command: "npx", args: ["-y", "some-mcp-server"] });
 //   const courses = await c.call("get_my_courses", {});
 //   c.close();
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 /** Long, because an interactive SSO handshake happens inside a single call. */
 export const CALL_TIMEOUT_MS = 120000;
@@ -25,6 +37,47 @@ export class McpError extends Error {
     super(message);
     this.name = "McpError";
   }
+}
+
+/**
+ * The argv for a whole-tree kill, or null where taskkill does not apply. PURE.
+ *
+ * Every other platform gets null rather than a `kill -TERM -<pgid>` equivalent:
+ * a POSIX `spawn` without `detached` puts the child in this process's group, so
+ * killing the group would kill the caller too, and the pipe-holding grandchild
+ * problem is a Windows one in the first place.
+ */
+export function killTreeArgv(pid, platform = process.platform) {
+  if (platform !== "win32") return null;
+  // `Number(null)` is 0, so the type has to be checked before the value: a
+  // `taskkill /PID null` would be a confusing no-op, and `/PID 0` is worse.
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  return ["taskkill", "/T", "/F", "/PID", String(pid)];
+}
+
+/**
+ * An idempotent, never-throwing `close()` for a spawned child.
+ *
+ * `spawnSyncImpl` and `platform` are injected so the tree-kill can be exercised
+ * against a fake child: no process, no npx, no network. Order matters - end
+ * stdin so a well-behaved server can exit on its own, take the tree down, kill
+ * what is left, and only then destroy the pipes we are still holding.
+ */
+export function makeCloser(child, { spawnSyncImpl = spawnSync, platform = process.platform } = {}) {
+  let closed = false;
+  return function close() {
+    if (closed) return;
+    closed = true;
+    try { child.stdin.end(); } catch { /* already gone */ }
+    const argv = killTreeArgv(child?.pid, platform);
+    if (argv) {
+      try { spawnSyncImpl(argv[0], argv.slice(1), { stdio: "ignore", timeout: 15000 }); } catch { /* best effort */ }
+    }
+    try { child.kill(); } catch { /* already dead */ }
+    try { child.stdout.destroy(); } catch { /* already gone */ }
+    try { child.stderr.destroy(); } catch { /* already gone */ }
+    try { child.unref(); } catch { /* not unrefable */ }
+  };
 }
 
 /**
@@ -125,9 +178,7 @@ export async function connect(server) {
       const result = await request("tools/list", {});
       return (result?.tools ?? []).map((t) => t.name);
     },
-    close() {
-      child.kill();
-    },
+    close: makeCloser(child),
     get stderrTail() {
       return stderrTail;
     },

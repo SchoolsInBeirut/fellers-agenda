@@ -23,6 +23,10 @@ import { fileURLToPath } from "node:url";
 import {
   ConfigError,
   DEFAULTS,
+  EMAIL_DIGEST_SINKS,
+  LEGACY_EMAIL_DIGEST,
+  LEGACY_SCHEDULER_KEYS,
+  LLM_EFFORTS,
   NOT_SET,
   assertConfigured,
   derive,
@@ -69,7 +73,7 @@ test("a user value overrides one default without erasing its siblings", () => {
   const { dir, path } = withConfig({ scheduler: { taskPrefix: "Homework" } });
   const cfg = loadConfig(path, quiet);
   assert.equal(cfg.scheduler.taskPrefix, "Homework");
-  assert.equal(cfg.scheduler.morningAt, "07:03", "the other scheduler keys survive");
+  assert.equal(cfg.scheduler.dailyAt, "10:30", "the other scheduler keys survive");
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -279,6 +283,279 @@ test("calendars, and gcal inside it, must be objects", () => {
 });
 
 // ---------------------------------------------------------------------------
+// scheduler - one boundary, and the 1.x keys that no longer name one
+//
+// 2.0.0 retired the two heavy runs and the 2-hourly sync lane. A config written
+// against 1.x still has their keys in it, and the two ways of getting this
+// wrong are both bad: throw, and somebody's week stops being drawn over a key
+// nothing reads; say nothing, and they keep editing `morningAt` and wondering
+// why the run still happens at 10:30.
+// ---------------------------------------------------------------------------
+
+test("the shipped scheduler has one boundary and no 1.x keys", () => {
+  assert.equal(DEFAULTS.scheduler.dailyAt, "10:30");
+  assert.equal(DEFAULTS.scheduler.quietUntil, "10:23");
+  assert.equal(DEFAULTS.scheduler.quietFrom, "23:00");
+  for (const k of LEGACY_SCHEDULER_KEYS) {
+    assert.ok(!(k in DEFAULTS.scheduler), `scheduler.${k} is retired and must not be a default`);
+  }
+});
+
+test("a config still carrying the 1.x scheduler keys is accepted, with ONE warning naming dailyAt", () => {
+  const { dir, path } = withConfig({
+    timezone: "UTC",
+    scheduler: { morningAt: "07:03", eveningAt: "18:07", syncWindow: ["09:00", "23:00"], syncGapHours: 3 },
+  });
+  const warnings = [];
+  const cfg = loadConfig(path, { warn: (m) => warnings.push(m) });
+
+  assert.equal(cfg.scheduler.dailyAt, "10:30", "the run still happens, at the one boundary there is");
+  assert.equal(warnings.length, 1, `exactly one warning, got:\n${warnings.join("\n")}`);
+  assert.match(warnings[0], /scheduler\.dailyAt/);
+  assert.match(warnings[0], /morningAt, eveningAt, syncWindow, syncGapHours/);
+  assert.match(warnings[0], /docs\/CONFIG\.md/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a scheduler with none of the 1.x keys says nothing at all", () => {
+  const { dir, path } = withConfig({ timezone: "UTC", scheduler: { dailyAt: "11:15" } });
+  const warnings = [];
+  assert.equal(loadConfig(path, { warn: (m) => warnings.push(m) }).scheduler.dailyAt, "11:15");
+  assert.deepEqual(warnings, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the three scheduler clocks must be HH:MM, and the error names the key", () => {
+  // `install-tasks.cmd` hands `dailyAt` straight to `-Daily -At`, while
+  // stale-check's parseClock falls back silently. A typo therefore registers a
+  // task at one time and a watchdog that believes the boundary is somewhere
+  // else - two disagreeing clocks and no error anywhere.
+  // `null` is deliberately absent: it means "I have not chosen one", and the
+  // merge rule answers that with the documented default, exactly as it does for
+  // the namespace. Every value below is a value somebody MEANT.
+  const bad = ["10.30", "1030", "24:00", "10:60", "10:5", "half past ten", "", 7, true];
+  for (const key of ["dailyAt", "quietUntil", "quietFrom"]) {
+    for (const value of bad) {
+      const { dir, path } = withConfig({ timezone: "UTC", scheduler: { [key]: value } });
+      assert.throws(
+        () => loadConfig(path, quiet),
+        (e) => e instanceof ConfigError && e.key === `scheduler.${key}`,
+        `scheduler.${key} = ${JSON.stringify(value)} should be refused`,
+      );
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("every legal HH:MM spelling is accepted, including a bare hour", () => {
+  for (const value of ["00:00", "9:05", "09:05", "23:59"]) {
+    const { dir, path } = withConfig({
+      timezone: "UTC",
+      scheduler: { dailyAt: value, quietUntil: "00:00", quietFrom: "23:59" },
+    });
+    assert.equal(loadConfig(path, quiet).scheduler.dailyAt, value);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a dailyAt the watchdog could never rescue warns, and still loads", () => {
+  // 22:50 + the 20-minute grace is 23:10, which is already inside the 23:00
+  // quiet ceiling: decideStale can never call the day missed. The RUN is fine,
+  // so this is a warning - refusing to load would cost the whole agenda to
+  // save the watchdog.
+  const { dir, path } = withConfig({ timezone: "UTC", scheduler: { dailyAt: "22:50" } });
+  const warnings = [];
+  const cfg = loadConfig(path, { warn: (m) => warnings.push(m) });
+
+  assert.equal(cfg.scheduler.dailyAt, "22:50", "the run still happens where it was asked to");
+  assert.equal(warnings.length, 1, warnings.join("\n"));
+  for (const key of ["scheduler.dailyAt", "scheduler.quietUntil", "scheduler.quietFrom"]) {
+    assert.ok(warnings[0].includes(key), `the warning must name ${key}:\n${warnings[0]}`);
+  }
+  assert.match(warnings[0], /watchdog can never rescue/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a boundary before the quiet floor warns for the same reason", () => {
+  // 06:00 + 20 = 06:20, which is before the 10:23 floor. Symmetrical failure,
+  // same sentence.
+  const { dir, path } = withConfig({ timezone: "UTC", scheduler: { dailyAt: "06:00" } });
+  const warnings = [];
+  loadConfig(path, { warn: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1, warnings.join("\n"));
+  assert.match(warnings[0], /watchdog can never rescue/);
+  rmSync(dir, { recursive: true, force: true });
+
+  // ...and moving the floor with it is the fix, which must go quiet again.
+  const ok = withConfig({ timezone: "UTC", scheduler: { dailyAt: "06:00", quietUntil: "05:55" } });
+  const quietWarnings = [];
+  loadConfig(ok.path, { warn: (m) => quietWarnings.push(m) });
+  assert.deepEqual(quietWarnings, []);
+  rmSync(ok.dir, { recursive: true, force: true });
+});
+
+test("the shipped defaults leave the watchdog able to do its job", () => {
+  // 10:30 + 20 = 10:50, inside [10:23, 23:00). If this ever stops being true,
+  // the default install has a watchdog that cannot fire.
+  const warnings = [];
+  loadConfig(join(tmpdir(), "definitely-not-a-config-file.json"), { warn: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, []);
+});
+
+// ---------------------------------------------------------------------------
+// llm - the model window's budget
+//
+// Every value here becomes a command-line argument, and two of them are the
+// only thing between a wedged run and a fortnight of usage.
+// ---------------------------------------------------------------------------
+
+test("the shipped llm block is the documented one", () => {
+  assert.deepEqual(DEFAULTS.llm, {
+    enabled: true,
+    model: "claude-sonnet-5",
+    effort: "medium",
+    maxTurns: 20,
+    maxBudgetUsd: 1,
+    timeoutMinutes: 45,
+  });
+  assert.deepEqual([...LLM_EFFORTS], ["low", "medium", "high"]);
+});
+
+const badLlm = [
+  [{ enabled: "true" }, "llm.enabled", "a truthy string reads as ON to everything but a === true"],
+  [{ model: "" }, "llm.model", "an empty model name would reach the CLI as a bare --model"],
+  [{ model: 7 }, "llm.model", "and a number is not a model"],
+  [{ effort: "maximum" }, "llm.effort", "the flag takes three values"],
+  [{ maxTurns: 0 }, "llm.maxTurns", "zero turns is not a cap, it is an outage"],
+  [{ maxTurns: 2.5 }, "llm.maxTurns", "a count is a whole number"],
+  [{ maxTurns: 10000 }, "llm.maxTurns", "past the ceiling is a typo, not an ambition"],
+  [{ maxBudgetUsd: 0 }, "llm.maxBudgetUsd", "a zero budget refuses every run"],
+  [{ maxBudgetUsd: -1 }, "llm.maxBudgetUsd", "negative is nonsense"],
+  [{ maxBudgetUsd: "1" }, "llm.maxBudgetUsd", "a string dollar amount is not a number"],
+  [{ timeoutMinutes: 0 }, "llm.timeoutMinutes", "a zero timeout kills the window it opened"],
+  [{ timeoutMinutes: 1000 }, "llm.timeoutMinutes", "longer than the task's own limit is meaningless"],
+];
+
+test("every llm value is checked, and the error names the key", () => {
+  for (const [llm, key, why] of badLlm) {
+    const { dir, path } = withConfig({ timezone: "UTC", llm });
+    assert.throws(
+      () => loadConfig(path, quiet),
+      (e) => e instanceof ConfigError && e.key === key,
+      `${JSON.stringify(llm)}: ${why}`,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a fractional budget is fine - it is dollars, not turns", () => {
+  const { dir, path } = withConfig({ timezone: "UTC", llm: { maxBudgetUsd: 0.25 } });
+  assert.equal(loadConfig(path, quiet).llm.maxBudgetUsd, 0.25);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("llm.enabled false is a legal, documented state - the page still updates without a model", () => {
+  const { dir, path } = withConfig({ timezone: "UTC", llm: { enabled: false } });
+  const cfg = loadConfig(path, quiet);
+  assert.equal(cfg.llm.enabled, false);
+  assert.equal(cfg.llm.model, "claude-sonnet-5", "the rest of the block survives being switched off");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unknown key under llm warns, the way an unknown top-level key does", () => {
+  const { dir, path } = withConfig({ timezone: "UTC", llm: { maxTokens: 100 } });
+  const warnings = [];
+  loadConfig(path, { warn: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /llm\.maxTokens/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// notifications.emailDigest - a sink, not a switch
+// ---------------------------------------------------------------------------
+
+test("emailDigest names one of the sinks that exist, or nothing gets sent", () => {
+  assert.deepEqual([...EMAIL_DIGEST_SINKS], ["off", "outlook"]);
+  for (const bad of ["gmail", "on", "", 1, 0, []]) {
+    const { dir, path } = withConfig({ timezone: "UTC", notifications: { emailDigest: bad } });
+    assert.throws(
+      () => loadConfig(path, quiet),
+      (e) => e instanceof ConfigError && e.key === "notifications.emailDigest",
+      `emailDigest ${JSON.stringify(bad)} should be refused`,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+  for (const good of EMAIL_DIGEST_SINKS) {
+    const { dir, path } = withConfig({ timezone: "UTC", notifications: { emailDigest: good } });
+    assert.equal(loadConfig(path, quiet).notifications.emailDigest, good);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A 1.x config with the digest switched ON is the upgrade path that matters
+// most, and it is the one that used to throw. A ConfigError here is not one
+// broken feature: `loadConfig` is the first thing the launcher, the pipeline,
+// the stale-run watchdog AND the auth lane each call, so the agenda would go
+// dark with nothing anywhere able to say why.
+test("every 1.x emailDigest value still loads, mapped, with ONE warning naming the key", () => {
+  const cases = [
+    ["morning-only", "outlook", "1.x asked WHEN; there is only one run now, so the question is WHERE"],
+    ["every-run", "outlook", "same"],
+    [true, "outlook", "a boolean named no sink, and read as ON to every truthiness test"],
+    [false, "off", "...and its opposite is plainly off"],
+  ];
+  for (const [was, becomes, why] of cases) {
+    const { dir, path } = withConfig({ timezone: "UTC", notifications: { emailDigest: was } });
+    const warnings = [];
+    const cfg = loadConfig(path, { warn: (m) => warnings.push(m) });
+
+    assert.equal(cfg.notifications.emailDigest, becomes, `${JSON.stringify(was)}: ${why}`);
+    assert.equal(warnings.length, 1, `exactly one warning for ${JSON.stringify(was)}:\n${warnings.join("\n")}`);
+    assert.match(warnings[0], /notifications\.emailDigest/);
+    assert.match(warnings[0], /"off" and "outlook"/, "the warning must name the values that work now");
+    assert.ok(warnings[0].includes(JSON.stringify(was)), "and the value it found");
+    assert.match(warnings[0], /docs\/CONFIG\.md/);
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.deepEqual([...LEGACY_EMAIL_DIGEST.keys()], ["morning-only", "every-run", true, false]);
+});
+
+test("the mapped value is what reaches the digest gate, not the 1.x spelling", () => {
+  // send-digest.mjs and the pipeline's digest step both compare against
+  // "outlook" exactly. Normalising in the loader is what keeps that one
+  // comparison, in two places, from having to know any history.
+  const { dir, path } = withConfig({ timezone: "UTC", notifications: { emailDigest: "every-run" } });
+  const cfg = loadConfig(path, quiet);
+  assert.ok(EMAIL_DIGEST_SINKS.includes(cfg.notifications.emailDigest));
+  assert.equal(cfg.notifications.digestTo, null, "the rest of the block is untouched");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an explicit null is 'unset' here too, and falls back to the shipped answer", () => {
+  // The same rule the namespace follows: null and [NOT SET] both say "I have
+  // not chosen one", and the answer to both is the documented default rather
+  // than a refusal to load. It is the only reason these two are not in the
+  // refused list above.
+  const { dir, path } = withConfig({ timezone: "UTC", notifications: { emailDigest: null }, llm: { model: NOT_SET } });
+  const cfg = loadConfig(path, quiet);
+  assert.equal(cfg.notifications.emailDigest, "off");
+  assert.equal(cfg.llm.model, "claude-sonnet-5");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// drive - the page reads through a connector, the pipeline runs rclone
+// ---------------------------------------------------------------------------
+
+test("drive carries the rclone transport's two keys", () => {
+  const cfg = loadConfig(join(tmpdir(), "definitely-not-a-config-file.json"), quiet);
+  assert.equal(cfg.drive.rcloneRemote, "agenda");
+  assert.equal(cfg.drive.rcloneExe, null, "[NOT SET] means find it on PATH");
+  assert.equal(cfg.drive.connectorName, "Google Drive", "the page still names a connector");
+});
+
+// ---------------------------------------------------------------------------
 // derive() - the names nothing else may rebuild
 // ---------------------------------------------------------------------------
 
@@ -292,9 +569,7 @@ test("derive: the default namespace produces the documented names", () => {
   });
   assert.deepEqual(d.storageKeys, { marks: "agenda.marks.v1", blocks: "agenda.blocks.v1" });
   assert.deepEqual(d.taskNames, {
-    morning: "Agenda Morning",
-    evening: "Agenda Evening",
-    sync: "Agenda Sync",
+    daily: "Agenda Daily",
     staleCheck: "Agenda StaleCheck",
     authRetry: "Agenda AuthRetry",
   });
@@ -308,7 +583,7 @@ test("derive: a custom namespace and task prefix move every name together", () =
   assert.equal(d.docTitles.data, "study-data");
   assert.equal(d.docTitles.completions, "study-completions");
   assert.equal(d.storageKeys.marks, "study.marks.v1");
-  assert.equal(d.taskNames.sync, "Study Sync");
+  assert.equal(d.taskNames.daily, "Study Daily");
   assert.equal(d.logPrefix, "[study]");
 });
 

@@ -9,11 +9,15 @@
       "Bash(node scripts/reauth.mjs --probe)",
       "Bash(node src/stale-check.mjs --dry-run --verbose)",
       "Bash(node src/auth-retry.mjs --status)",
+      "Bash(node src/pipeline.mjs --phase 1)",
+      "Bash(node src/drive-rclone.mjs status)",
+      "Bash(node scripts/run-daily.mjs --dry-run)",
       "Bash(node --test test/*.test.mjs)",
       "Read(./**)"
     ],
     "deny": [
       "Read(./.env)",
+      "Read(./data/gcal-feeds.json)",
       "Read(./**/*credentials*.json)",
       "Read(./**/*.dpapi)",
       "Read(./backups/**)",

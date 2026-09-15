@@ -7,7 +7,7 @@
 // produced it. If the SSD dies at 03:00 the user loses the study log, the overrides,
 // the completions, the block edits and the plan - months of accumulated user
 // opinion that no scrape can rebuild, because Brightspace never knew any of it.
-// This script exists so that after every heavy run there is a complete, plain-text,
+// This script exists so that after every daily run there is a complete, plain-text,
 // re-importable copy of that state sitting in Drive next to the payload.
 //
 // ---------------------------------------------------------------------------
@@ -36,7 +36,9 @@
 //        data/*.json                 every piece of state the pipeline accumulates
 //        data/focus-note.txt         the one non-JSON file that holds user words
 //
-//   OUT  data/content-dump.json      a scrape artefact - big, and re-fetchable
+//   OUT  data/gcal-feeds.json        a calendar's "secret address in iCal format" is
+//                                    a bearer credential; it never leaves this machine
+//        data/content-dump.json      a scrape artefact - big, and re-fetchable
 //        data/sample-*.json          fixtures that live in the repo already
 //        data/runlog*                a diary of runs, not state; restoring it would
 //                                    overwrite the record of the restore itself
@@ -123,6 +125,14 @@ export const BACKUP_KEEP = 14;
 export const BAK_SUFFIX = ".pre-restore.bak";
 export const ROOT_FILES = ["config.json"];
 export const DATA_EXTRA_FILES = ["focus-note.txt"];
+/**
+ * Never mirrored, whatever else the rules say. `data/gcal-feeds.json` holds the
+ * calendar's "secret address in iCal format" - a URL that IS the credential, so
+ * anyone holding it can read the user's calendar without logging in to anything.
+ * The mirror goes into a Google Doc; a bearer secret does not leave this machine.
+ * The events those feeds produce are ordinary derived state and still travel.
+ */
+export const SECRET_FILES = ["gcal-feeds.json"];
 /** The bundled sample term ships in the repository; it is never state. */
 export const FIXTURES_DIR = "fixtures";
 export const EXIT = { ok: 0, error: 1, usage: 2, tooBig: 3 };
@@ -137,6 +147,8 @@ const LOG = "[drive-bundle]";
  */
 export function isMirrored(name) {
   if (typeof name !== "string" || !name) return false;
+  // First clause and no exceptions: a bearer secret never leaves this machine.
+  if (SECRET_FILES.includes(name)) return false;
   if (name.startsWith("runlog")) return false;
   if (name.startsWith("sample-")) return false;
   if (name === "content-dump.json") return false;
@@ -257,7 +269,7 @@ export function resolveRel(rel, root, dataDir) {
 
 /**
  * Read every mirrored file. Returns {files, bytes, sizes}. A file that vanishes
- * between the listing and the read is skipped, not fatal: a heavy run is writing to
+ * between the listing and the read is skipped, not fatal: the daily run is writing to
  * this directory while the mirror is being taken.
  */
 export function collect(root, dataDir) {

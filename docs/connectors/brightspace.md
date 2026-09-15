@@ -18,7 +18,7 @@
 
 ## What it does
 
-Per course, per heavy run:
+Per course, per daily run:
 
 | Call | Gives us |
 |---|---|
@@ -359,7 +359,7 @@ When a probe is green and a sweep still comes back wrong, the next step is
 |---|---|
 | An item appears twice with different dates — an "opens" and a "closes" | Handled. `merge.mjs` collapses calendar twins; the corroborated row wins and exams keep the earliest twin, which is the session |
 | A shell course returns access-denied on everything | Mark it `"skip": true` in `courses[]`. Those errors are expected and skipping keeps them out of every digest |
-| Some instructors post schedules only as prose | The heavy runbook's step 2 re-reads content modules and syllabi weekly and extracts dated deliverables, keeping `approx: true` when only a week was given |
+| Some instructors post schedules only as prose | `get_course_content` brings the prose in and dated deliverables are extracted from it, keeping `approx: true` when only a week was given. The deeper weekly re-read of syllabus PDFs needs connector tools the daily run does not have, so it is an interactive job: ask for it in a chat session when a syllabus changes |
 | A quiz shows no attempts but is graded | The student endpoint quirk above. It stays `null`. This is correct |
 
 ---

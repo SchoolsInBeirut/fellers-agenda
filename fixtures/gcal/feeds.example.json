@@ -1,0 +1,37 @@
+{
+  "_readme": [
+    "Copy this file to data/gcal-feeds.json and put the REAL secret address in `url`.",
+    "Get it from your calendar provider: in Google Calendar it is Settings -> the",
+    "calendar in the left column -> Integrate calendar -> 'Secret address in iCal",
+    "format'. It is a BEARER SECRET: anyone holding it can read that calendar forever.",
+    "src/connectors/gcal-sync.mjs never logs it, never puts it in argv, never writes it",
+    "into data/gcal-items.json or the payload, and src/drive-bundle.mjs refuses to",
+    "mirror gcal-feeds.json to Drive. If it ever leaks, click 'Reset' next to the",
+    "secret address on that same settings page and paste the new one here.",
+    "Direction is inbound only: nothing in this repository ever writes to a calendar.",
+    "Check the file with `node src/connectors/gcal-sync.mjs --validate`, which prints",
+    "ids and hosts only. The route also needs calendars.gcal.enabled = true in",
+    "config.json; see docs/connectors/calendar-feeds.md.",
+    "",
+    "id             [a-z0-9-]{1,24}, unique, and not a reserved prefix ('fb' is",
+    "               refused - it already names study sessions). Prefixes every",
+    "               meeting key.",
+    "label          shown on the page, 24 characters or fewer. Omit it and the feed",
+    "               whose id matches calendars.gcal.feed takes calendars.gcal.label;",
+    "               any other feed is labelled with its own id.",
+    "url            https only. An empty url means 'not set up yet' and is a clean",
+    "               skip, not an error.",
+    "skipUidSuffix  optional, per feed. Overrides calendars.gcal.skipUidSuffix: events",
+    "               whose UID ends with it were put on that calendar by this agenda's",
+    "               own ICS sink, so they are dropped instead of being drawn twice.",
+    "               Set it to \"\" to switch that guard off for one feed."
+  ],
+  "v": 1,
+  "feeds": [
+    {
+      "id": "calendar",
+      "label": "Calendar",
+      "url": "https://calendar.example.test/ical/REPLACE_WITH_YOUR_SECRET_ADDRESS/basic.ics"
+    }
+  ]
+}

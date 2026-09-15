@@ -213,8 +213,9 @@ export async function healthCheck(ctx) {
    stale, a tool returning nothing — all of those are `errors[]` entries. A
    connector that throws takes the whole sweep with it, and one flaky source must
    never cost the user their whole agenda.
-2. **Respect `ctx.deadline`.** A source that hangs must give up. The light run
-   has a two-minute budget and the heavy run has users waiting.
+2. **Respect `ctx.deadline`.** A source that hangs must give up. Phase 1 gives
+   the whole scrape twelve minutes and there is one run a day, so a source that
+   hangs costs the user their whole agenda for that day.
 3. **`healthCheck()` must be cheap, and it must write nothing.**
    `node scripts/health-check.mjs` runs it for every enabled connector, with a
    45-second budget each, and `/agenda-doctor` runs that. It proves a session is
@@ -306,10 +307,10 @@ reverted.
 - **A calendar has two directions and they are different features.** A
   `kind: "calendar-sink"` connector under `connectors.calendar.<provider>` writes
   the agenda's deadlines OUT. Reading the user's own meetings IN is not a
-  registry connector at all: it is `calendars.gcal` in the config and
-  `src/connectors/gcal-ingest.mjs` on disk, because the bytes arrive through a
-  connector the user authorized in their own Claude account and the pipeline has
-  no credential to fetch them with. See "Agent-fed sources" below.
+  registry connector at all: it is `calendars.gcal` in the config, with two
+  routes on disk - `src/connectors/gcal-sync.mjs`, which fetches the calendar's
+  private feed URL itself, and `src/connectors/gcal-ingest.mjs`, which normalises
+  a connector result somebody saved by hand. See "Fed sources" below.
 - **`materials` is not a connector kind.** `connectors.materials` is a flat
   config block (`enabled`, `root`, `categories`, `maxFileMB`) driving the
   standalone `src/materials-sync.mjs`. There is no provider level, no registry
@@ -322,7 +323,7 @@ has been verified against their account, not before.
 
 ---
 
-## 5b. Agent-fed sources - when the pipeline cannot hold the credential
+## 5b. Fed sources - when the pipeline cannot hold the credential
 
 Most sources here are adapters: the pipeline calls something and gets data back.
 Some sources cannot work that way, and the inbound calendar is the worked
@@ -330,43 +331,59 @@ example.
 
 A personal calendar needs OAuth against an account the user owns. Putting those
 credentials on the user's machine means a token store, a refresh flow and a
-consent screen a scheduled run cannot answer at 07:03. But the user has already
-authorized a calendar connector in their own Claude account - and the scheduled
-run **is** a Claude agent. So the agent borrows that authorization for the length
-of one step.
+consent screen a scheduled run cannot answer at half past ten in the morning. Two
+ways out, and this repository ships both:
 
-The shape, and it generalises to any source in this position:
+- **A per-source shared secret.** A calendar's private iCal address is a URL that
+  reads that one calendar and nothing else. `src/connectors/gcal-sync.mjs` holds
+  it in `data/gcal-feeds.json`, fetches it over HTTPS and parses RFC 5545 itself.
+  No OAuth, no token refresh, no consent screen - and a leak is repaired by
+  resetting the address on the calendar's side, which costs the user nothing they
+  cannot undo. **This is what the daily run uses.**
+- **Borrowed authorization, by hand.** Somebody working in a chat session calls a
+  connector they authorized on their own account, saves the answer verbatim, and
+  hands the file to `src/connectors/gcal-ingest.mjs`. The scheduled run cannot do
+  this any more - its model window is started with no connectors at all - so this
+  route is interactive only.
 
-1. **The runbook** tells the agent exactly which tool to call, with which
-   arguments, and to save the result **VERBATIM** to a file under `data/tmp/`.
-   No reformatting, no trimming, no summarising. The agent is a transport.
-2. **A deterministic script** reads that file and decides everything: what the
+The shape both share, and it generalises to any source in this position:
+
+1. **Something fetches bytes and saves them**, verbatim, to a file: a script with
+   a feed URL, or a person with a connector. No reformatting, no trimming, no
+   summarising.
+2. **A deterministic script reads that file and decides everything**: what the
    fields mean, which records are in the window, what an offset-less time is, and
-   what happens when the file is missing. `src/connectors/gcal-ingest.mjs` is
-   this half, and `gcal-normalize.mjs` is its pure core.
+   what happens when the file is missing. `gcal-normalize.mjs` is the pure core
+   both routes share.
 3. **The exit code is the contract.** 0 ingested, 3 partial (the previous run's
    data stands in for up to 48 hours, and the file is written either way so
    nothing on disk is lying), 1 hard failure with the previous file untouched.
-4. **The runbook maps the code to one log token** and continues. A source like
+   `gcal-sync.mjs` adds 2 for "no feeds are configured", where it rewrites the
+   output empty rather than leaving last week's meetings on the page. Note where
+   the line falls: a fetch that failed - even every fetch - is **3**, because the
+   file was still written honestly; **1** is reserved for the cases where nothing
+   could be trusted enough to write at all.
+4. **The pipeline maps the code to one log token** and continues. A source like
    this never fails a run.
 
-**The agent copies bytes; the script decides.** Everything that is a judgement
+**Whoever copies the bytes, the script decides.** Everything that is a judgement
 lives in code a unit test can pin down, which is the same rule the rest of this
 repository runs on - it is just applied to a fetch instead of to a plan.
 
 Three rules that come with the shape:
 
-- **Direction is declared and enforced.** The runbook restricts the agent to the
-  connector's read tools, and the script cannot reach the network at all, so
-  "inbound only" is not a promise - it is a property of a script that has no
-  socket.
-- **The raw file is a secret.** It may hold attendee addresses, meeting bodies
-  and conference PINs. Nothing from it is printed: a warning names a record by
-  eight characters of its id, a parse failure is reported as a byte count and
-  never a snippet, and the temp file is deleted by the step that made it.
-- **Never call `authenticate`.** A connector the user has not authorized is a
-  `SKIPPED` token and a line in the digest. A scheduled run that opens a consent
-  screen leaves a browser waiting on somebody who is asleep.
+- **Direction is declared and enforced.** `gcal-sync.mjs` does one thing with its
+  socket - an HTTPS GET of a feed - and `gcal-ingest.mjs` cannot reach the network
+  at all, so "inbound only" is not a promise, it is a property of the code.
+- **The credential and the raw file are both secrets.** A feed URL is a bearer
+  token: it never appears in argv, in a log, in an error, in the payload or in
+  the state mirror. A saved connector result may hold attendee addresses, meeting
+  bodies and conference PINs, so nothing from it is printed either - a warning
+  names a record by eight characters of its id, a parse failure is reported as a
+  byte count and never a snippet, and the temp file is deleted by the step that
+  made it.
+- **Never call `authenticate`.** A scheduled run cannot answer a consent screen,
+  and in 2.0.0 it cannot reach one either.
 
 ---
 
@@ -480,7 +497,7 @@ service that can ring when your machine is off, and reports
 |---|---|---|
 | Mail triage → deadline items | `mail-outlook` sweep | disabled; the mail panel hides itself |
 | Deadline events with reminders | `calendar-outlook` sink | `calendar-ics` sink, subscribed from Google or Apple Calendar |
-| Dead-man's switch | a calendar event 26 h out | **not available.** `deadman=SKIPPED(no-calendar-sink)`, an expected token |
+| Dead-man's switch | a calendar event 30 h out | **not available.** `deadman=SKIPPED(no-calendar-sink)`, an expected token |
 | Everything else — LMS, board, planner, page, buses | identical | **identical** |
 
 ---
@@ -589,7 +606,7 @@ Note the four decisions that matter:
   information, and inventing a date for it would displace real coursework.
 - **Every `ctx.mcp()` handle is closed in a `finally`.** The shipped connectors
   do this (`lms-brightspace.mjs`); the cost of forgetting is a stray child
-  process on every run, twice a day, forever.
+  process on every run, every day, forever.
 - **A tool result is not guaranteed to be an array.** `call()` parses JSON when
   it can and hands back the raw string when it cannot, so the shape is checked
   before it is iterated. `lms-brightspace.mjs` guards the same way.

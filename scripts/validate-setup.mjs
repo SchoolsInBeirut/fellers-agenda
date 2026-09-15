@@ -29,7 +29,7 @@
 //    1  at least one hard check failed; the reasons were printed
 // ===========================================================================
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +39,7 @@ import { fileURLToPath } from "node:url";
 // CLAUDE.md's "Connectors on:" line cannot drift apart.
 import { connectorsOn } from "./lib/setup-config.mjs";
 import { checkGcal, GCAL_FILE } from "./lib/setup-gcal.mjs";
+import { RCLONE_INSTALL, rcloneConsent } from "./lib/setup-report.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -174,11 +175,18 @@ check(
   "Repository layout",
   "Something is missing from this clone. Re-clone the template, or check you are in the right folder.",
   () => {
+    // The four files a scheduled run actually needs, and the two the whole
+    // repository is built around. `runbooks/daily-agent.md` is what the model
+    // window reads; `scripts/run-daily.mjs` is what the scheduler starts;
+    // `src/pipeline.mjs` is what does the work either side of the model.
+    // (1.x wanted runbooks/heavy-run.md and runbooks/sync-run.md. Those are
+    // retired and now live under runbooks/legacy/, where nothing reads them.)
     const want = [
       "src",
       "web/page-template.html",
-      "runbooks/heavy-run.md",
-      "runbooks/sync-run.md",
+      "runbooks/daily-agent.md",
+      "scripts/run-daily.mjs",
+      "src/pipeline.mjs",
       "config.example.json",
       "fixtures/demo"
     ];
@@ -407,6 +415,86 @@ await (async () => {
   } catch {
     /* a malformed courses block was already reported by Config validation */
   }
+
+  // The transport the daily run publishes through.
+  //
+  // This is the one prerequisite that is invisible until the moment it matters:
+  // everything renders perfectly on a machine with no rclone, and the only
+  // symptom is that the page on the user's phone never changes. rclone needs an
+  // install AND one consent click, and neither this file nor the wizard can do
+  // the second - so both are named here, with the exact command.
+  check("Drive transport (rclone)", null, () => {
+    if (cfg?.drive?.enabled !== true) {
+      return { level: PASS, detail: "(off) - drive.enabled is false, so nothing is published" };
+    }
+    const remote = cfg?.drive?.rcloneRemote || "agenda";
+    const install = RCLONE_INSTALL[process.platform] ?? "see https://rclone.org/install/";
+    const consent = rcloneConsent(remote);
+
+    // Checked BEFORE the probe, not after it: `AGENDA_PREFLIGHT_NO_NETWORK` is
+    // the test suite's way out, and the suite may not spawn rclone AT ALL - not
+    // the listing, not even `rclone --version`. A guard that only skipped the
+    // listing still ran the binary several times per `npm test` on a machine
+    // that happened to have it. Nothing but `test/setup.test.mjs` sets this; it
+    // is not a supported setting.
+    if (process.env.AGENDA_PREFLIGHT_NO_NETWORK) {
+      return { level: NOTE, detail: `remote "${remote}" not probed (AGENDA_PREFLIGHT_NO_NETWORK)` };
+    }
+
+    const version = probeBin(cfg?.drive?.rcloneExe || "rclone");
+    if (!version) {
+      return {
+        level: FAIL,
+        detail: "`rclone` was not found - the daily run has no way to publish your page",
+        fix: `Install it:  ${install}      Then, once:  ${consent}`,
+      };
+    }
+
+    const cli = join(REPO, "src", "drive-rclone.mjs");
+    if (!existsSync(cli)) {
+      return { level: FAIL, detail: `${version}, but src/drive-rclone.mjs is missing from this clone`, fix: "Re-clone the template." };
+    }
+
+    // `status` is a read-only listing of the remote's root, and it is the ONE
+    // thing in this file that leaves the machine. There is no offline way to
+    // learn that a consent screen was answered, so the choice is this call or
+    // no check at all - and "no check" is how a user finds out at 10:30
+    // tomorrow.
+    const r = spawnSync(process.execPath, [cli, "status"], {
+      cwd: REPO,
+      encoding: "utf8",
+      timeout: 30000,
+      windowsHide: true,
+    });
+    if (r.status === 0) return `${version}, remote "${remote}" answers`;
+    const why = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? `exit ${r.status}`;
+    return {
+      level: FAIL,
+      detail: `${version}, but the remote did not answer: ${why}`,
+      fix: `One consent click fixes it - a browser opens and you click Allow:  ${consent}`,
+    };
+  });
+
+  // The model window. `llm.model` is the one value in that block a run cannot
+  // invent a default for once it is in front of the CLI.
+  check("The model window", null, () => {
+    const llm = cfg?.llm ?? {};
+    if (typeof llm.model !== "string" || !llm.model.trim()) {
+      return {
+        level: FAIL,
+        detail: "llm.model is not set, so a scheduled run has no model to open a window on",
+        fix: 'Put `"llm": { "model": "claude-sonnet-5" }` in config.json - docs/CONFIG.md has the whole block.',
+      };
+    }
+    if (llm.enabled !== true) {
+      return {
+        level: WARN,
+        detail: `off - llm.enabled is false, so every run logs llm=absent and the page still updates`,
+        fix: "Set llm.enabled to true when you want mail triage, descriptions and the digest.",
+      };
+    }
+    return `${llm.model}, effort ${llm.effort}, capped at ${llm.maxTurns} turns and $${llm.maxBudgetUsd} a run`;
+  });
 
   // The INBOUND calendar. It is not under `connectors` - it reads the user's
   // own meetings in, where `connectors.calendar.*` writes deadlines out - so

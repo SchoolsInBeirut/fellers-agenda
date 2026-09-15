@@ -5,7 +5,7 @@ disk and it works — the whole week is embedded in it. What it cannot do from
 disk is **update itself**, because a local file has no connectors.
 
 Publishing it as an Artifact on claude.ai fixes that. The published page fetches
-its data from a Google Doc that the pipeline refreshes twice a day, so the copy
+its data from a Google Doc that the pipeline refreshes once a day, so the copy
 on your phone is current without you copying a file anywhere. It also gains the
 ability to write back: ticking something off on your phone reaches your computer
 on the next run.
@@ -109,8 +109,8 @@ Copy the artifact's URL into `config.json`:
 "artifact": { "url": "https://claude.ai/…" }
 ```
 
-Nothing in the pipeline *reads* that URL — it is there so the runbooks can put a
-link in your run log and so you can find the page again six weeks from now.
+Nothing in the pipeline *reads* that URL — it is there so the digest can end with
+a link to your page, and so you can find the page again six weeks from now.
 
 ### 2d. Confirm it worked
 
@@ -241,9 +241,9 @@ its data. It is never decorative.
 | `embedded copy` | The page is showing the snapshot it was built with. | Normal on a page opened from disk. On a published page, press Refresh. |
 | `no embedded data` | The build produced a page with an unreadable snapshot. | Re-run `node src/render.mjs` and republish. |
 | `live refresh unavailable here` | There is no connector in this view at all. | You are looking at a local file, or the page was published without the `mcp` capability. |
-| `no data doc in Drive` | The connector works; nothing named `<ns>-data` was found. | The pipeline has not uploaded yet. Run the heavy runbook, or check the run log for `drive=FAILED` / `drive=SKIPPED(oversize)`. |
-| `data doc unreadable (checksum)` | The document exists but its checksum does not match its contents — it was transcribed wrong, truncated, or hand-edited. | **Do not edit the document.** Re-run the upload so a fresh one is created. |
-| `data doc unreadable (truncated)` | The document starts `AGD2.` but the envelope never finishes — the upload was cut short. The page refuses it outright rather than looking for an older envelope further down the file. | Re-run the upload. The runbook's read-back check normally catches this before the document is ever rotated in. |
+| `no data doc in Drive` | The connector works; nothing named `<ns>-data` was found. | The pipeline has not uploaded yet. Run `/agenda-now` (or `node scripts/run-daily.mjs`), or check the run log for `drive=FAILED` / `drive=SKIPPED(oversize)`. |
+| `data doc unreadable (checksum)` | The document exists but its checksum does not match its contents — it was transcribed wrong, truncated, or hand-edited. | **Do not edit the document.** Re-run the publish; it replaces the body in place. |
+| `data doc unreadable (truncated)` | The document starts `AGD2.` but the envelope never finishes — the upload was cut short. The page refuses it outright rather than looking for an older envelope further down the file. | Re-run the publish. `src/drive-rclone.mjs` reads every upload back and restores the last good payload when it does not match, so this should not survive a run. |
 | `data doc unreadable` | The document decoded but is not a payload this page understands. | Usually a page and a pipeline at different versions. Re-run `render.mjs` and republish. |
 | `this browser cannot read compressed data` | No `DecompressionStream`. | Use a current browser (Chrome 80+, Firefox 113+, Safari 16.4+). The embedded copy still renders. |
 | `Drive needs reconnecting on claude.ai` | The connector's authorisation expired. | Reconnect Google Drive in claude.ai settings. |

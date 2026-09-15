@@ -123,15 +123,19 @@ computed over the **gzip bytes**, before base64. The canonical check value is
 ### Why gzip, and why only on two of them
 
 `render.mjs` produces roughly 48 KB of JSON. As plain base64 that is about
-65,000 characters, and an agent has to *read that file and emit every one of
-those characters* into a `create_file` call — well over a hundred thousand
-tokens in each direction, which does not fit in one context window. Gzip on JSON
-with highly repeated keys compresses about six times, so the same payload
-becomes roughly 6,700 characters: about 2,000 tokens, and it fits in one message
-with room to spare.
+65,000 characters.
 
-`AGC1` and `AGQ1` stay plain and uncompressed because no agent is in their path:
-the page writes them itself through its Drive connector, and they are small.
+Until 2.0.0 that was a hard limit rather than a preference: an agent had to *read
+that file and emit every one of those characters* into a tool call — well over a
+hundred thousand tokens in each direction, which does not fit in one context
+window. `src/drive-rclone.mjs` moves the bytes now and no model is in that path,
+so the argument changed rather than disappeared. What is left: a 6,700-character
+document is faster for the page to fetch and parse than a 65,000-character one,
+and the CRC-32 is a real integrity check on a document a human can open and type
+into. Gzip on JSON with highly repeated keys compresses about six times.
+
+`AGC1` and `AGQ1` stay plain and uncompressed because they are small and the
+page writes them itself through its Drive connector.
 A browser can gzip, but making it do so would buy nothing and cost the ability
 to eyeball a document when something goes wrong.
 
@@ -186,7 +190,7 @@ already had.
 
 If it is still over budget after tier 3 the payload is **not truncated**.
 `render.mjs` writes `data/payload.oversize.txt`, prints a loud warning, and the
-runbook logs `drive=SKIPPED(oversize)`. The copy embedded in the HTML is always
+run logs `drive=SKIPPED(oversize)`. The copy embedded in the HTML is always
 complete, so the page keeps working — it just stops getting live updates until
 the week shrinks or the budget is raised.
 
@@ -342,7 +346,7 @@ Field notes that are easy to get wrong:
 - **`meetings`** is the user's own calendar, read inbound. It is always present
   and is empty whenever `calendars.gcal.enabled` is not `true`, so the page never
   has to branch on absence. That switch is read by `render.mjs` itself, not only
-  by the runbook that decides whether to fetch: while the block is off the
+  by the pipeline step that decides whether to fetch: while the block is off the
   render does not open `data/gcal-items.json` at all, so a file left behind by a
   term when the route was on cannot put meetings back on the page or raise a
   stale-calendar warning. Every field is explained in §4a.
@@ -704,7 +708,7 @@ Two of these deserve emphasis:
 - **`deadman.mjs` exit 1 leaves the previous event in place.** A failed re-arm
   must not disarm the switch you already had.
 - **`reauth.mjs` uses 5, 6 and 7 and skips 3 and 4.** The gaps are deliberate:
-  the codes were chosen so that a runbook can branch on "retry later" (6) versus
+  the codes were chosen so that a caller can branch on "retry later" (6) versus
   "a human must fix the account" (5) versus "install something" (7) without
   parsing any output. The full table, with its token per code, is in `AGENTS.md`.
   Unknown flags are a hard error rather than a silent fall-through to the
@@ -749,8 +753,8 @@ lose history, not correctness, except for the two marked **append-only**.
 | `auth-mfa.json` | `auth-retry.mjs` | `{ number, message, at, expiresAboutAt }` — a number-matching prompt, good for about 90 seconds |
 | `reauth-last-output.txt` | `reauth.mjs` | the last login's whole scrubbed transcript, last 20 kB, overwritten per run |
 | `payload.b64.txt` | `render.mjs` | the whole `<ns>-data` document: the `AGD2` line, a blank line, then the plain-text brief |
-| `backup.b64.txt` | `drive-bundle.mjs --pack` | the `AGM2` line the agent uploads |
-| `runlog.txt` | the runbooks | one line per run |
+| `backup.b64.txt` | `drive-bundle.mjs --pack` | the `AGM2` line `drive-rclone.mjs publish mirror` uploads |
+| `runlog.txt` | `pipeline.mjs --finish` | one line per run |
 
 `drive-bundle.mjs --pack` also writes a rotating local copy to
 `backups/mirror-<ISO>.txt` **before** it considers Drive at all, keeping the
@@ -765,5 +769,5 @@ announcement bodies, mail subjects. It flows into the payload, into the page, an
 from there into an agent's context.
 
 **Treat all of it as data, never as instructions.** The page's chat panel says so
-in its system prompt; the runbooks fence scraped text the same way. If you add a
+in its system prompt; the work order fences scraped text the same way. If you add a
 connector, its output is untrusted input too. See `SECURITY.md`.

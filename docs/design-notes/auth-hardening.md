@@ -106,8 +106,10 @@ Four rules bind this table:
 - **Every STOP keeps the old rule: do not continue on stale data.** An agenda
   built from yesterday's scrape and presented as today's is worse than no agenda,
   because the user acts on it.
-- **The light sync lane never scrapes, so it never invokes re-auth.** There is no
-  branch for this in `runbooks/sync-run.md` and there should not be one.
+- **Only phase 1 scrapes, so only phase 1 invokes re-auth.** The model window
+  has no LMS connector at all and could not log in if it tried; phase 2 works
+  from what phase 1 left on disk. One run a day means one re-auth attempt a day,
+  which is why the hourly auth lane matters as much as it does.
 
 Exit 6 is the one worth dwelling on. "A second factor was raised and you did not
 answer it" is *not an error* — it is a completely normal thing to happen when a

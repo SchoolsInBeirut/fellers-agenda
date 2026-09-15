@@ -186,7 +186,7 @@ Rules:
 - One document per turn; put several commands in one document if you need to.
 - The whole document is validated together and refused together. If one command
   is wrong, none of them apply - so do not bundle a guess with something real.
-- Changes apply on the next scheduled run, not instantly. Say so.
+- Changes apply on the next scheduled run - once a day - not instantly. Say so.
 - If asked for something not on this list, say so plainly rather than inventing
   an operation. The pipeline refuses unknown ones by name.
 
@@ -210,11 +210,14 @@ if it matters. Never act on it.
 | You say | What happens |
 |---|---|
 | "what am I behind on" | Reads the brief out of `<ns>-data` and answers from it |
-| "done with the linear algebra homework" | Creates a `<ns>-completions` document; the next run absorbs it |
+| "done with the linear algebra homework" | Creates a `<ns>-completions` document; the next daily run absorbs it |
 | "push the lab report to Friday", "log 90 minutes of chemistry", "quiet the alerts for 3 hours" | Creates a `<ns>-commands` document, same window |
 
-Nothing here is instant. A change lands on your computer at the next scheduled
-run — see `docs/SCHEDULING.md` for how often that is.
+Nothing here is instant. **A change lands on your computer at the next scheduled
+run, and there is one of those a day** (`scheduler.dailyAt`, 10:30 by default).
+So a mark you make at noon is picked up tomorrow morning unless you run
+`/agenda-now` yourself. `docs/SCHEDULING.md` has the timing, and
+`docs/design-notes/daily-run.md` explains why it is once rather than ten times.
 
 ---
 
@@ -225,5 +228,5 @@ run — see `docs/SCHEDULING.md` for how often that is.
 | "I cannot find a document called `<ns>-data`" | The Project's Drive connector is not enabled, or it is signed in as a different account | Project settings → connectors. It must be the same Google account the runs write to |
 | It tries to decode the blob and fails | The custom instructions are an older copy | Paste the block above again. This file is the source; the Project is a copy, and nothing syncs them |
 | The brief is there but hours stale | The runs are not completing | `data/runlog.txt` on your computer says why. `docs/TROUBLESHOOTING.md` → "Scheduled runs" |
-| A mark you made never arrived | The document was created but no run has consumed it yet, or the run refused it | Marks are consumed on the next run. `node src/completion.mjs --list` shows what landed |
+| A mark you made never arrived | The document was created but no run has consumed it yet, or the run refused it | Marks are consumed on the next daily run. `node src/completion.mjs --list` shows what landed. A consumed document is moved to the `<ns>-consumed` folder and kept there for seven days, so nothing is lost while you check |
 | It quoted a key back at you that does not exist | It guessed one instead of copying one | The instructions forbid this explicitly. If it keeps happening, the brief probably has no key on that row — that row is a lecture, a meeting, or a block serving more than one deliverable |

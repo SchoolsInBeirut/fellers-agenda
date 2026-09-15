@@ -218,9 +218,15 @@ changes *how many hours there are*.
 
 For a course graded on **mastered standards with retake sittings**, driven by
 `data/study-plan.json`. If that means nothing to you, leave it disabled and the
-whole subsystem no-ops — no card on the page, no section in the runbook, nothing.
+whole subsystem no-ops — no card on the page, nothing in the work order, nothing.
 
 `label` is what the card is called. `course` is the course code it tracks.
+
+When it is on, the plan is reviewed **once a week**: phase 1 puts a `standards`
+block in the work order on Mondays only, and the model edits
+`data/study-plan.json` under the rules in `runbooks/daily-agent.md`. Phase 2
+snapshots the file first and restores the snapshot if it comes back unparseable,
+so a bad edit costs a week of review rather than the plan.
 
 See `docs/design-notes/attendance-vs-announcement.md` for the rules about
 sittings, which are the subtle part.
@@ -248,12 +254,62 @@ is a **sink**: it writes your deadlines *out*, to Outlook or to an `.ics` file.
 This block is the opposite - it reads your own meetings *in*, so the planner
 knows which hours are already spoken for and never books study on top of one.
 
-It is off by default because it costs something the rest of the pipeline does
-not: a calendar connector authorized in **your own** Claude account. The
-pipeline holds no calendar credentials and never will. A scheduled run calls
-that connector itself, saves the answer verbatim to a file, and hands the file
-to `src/connectors/gcal-ingest.mjs`, which decides what it means.
-`runbooks/heavy-run.md` section 7.0 is the exact step.
+It is off by default because it costs one setup step the rest of the pipeline
+does not, and there are **two routes in**:
+
+| Route | How the events arrive | Who uses it |
+|---|---|---|
+| **A — feed URLs** (`data/gcal-feeds.json`) | `src/connectors/gcal-sync.mjs` fetches each calendar's private `.ics` address over HTTPS and parses it, including repeating events | **the daily run.** This is the route to set up |
+| **B — a saved connector result** (`data/tmp/gcal-raw.json`) | you call a calendar connector in a chat, save its answer verbatim, and hand the file to `src/connectors/gcal-ingest.mjs` | **interactive sessions only** |
+
+**Route B is no longer available to a scheduled run**, and that is deliberate:
+the model window is started with no connectors at all, which is most of why
+2.0.0 costs what it does (`docs/design-notes/daily-run.md`). Phase 1 picks route
+A when `data/gcal-feeds.json` exists, falls back to an already-saved
+`data/tmp/gcal-raw.json` if it does not, and otherwise logs
+`gcal=SKIPPED(no-feeds)` and carries on.
+
+### The feeds file, `data/gcal-feeds.json`
+
+Not part of `config.json`, because it holds **secrets**. Each `url` is the
+calendar's *private* address in iCal format: anyone holding it can read that
+calendar, with no sign-in. Treat it exactly as you would a password.
+
+```jsonc
+{
+  "v": 1,
+  "feeds": [
+    { "id": "calendar", "label": "Calendar", "url": "https://...basic.ics" }
+  ]
+}
+```
+
+`fixtures/gcal/feeds.example.json` is a copyable starting point — it carries the
+whole field reference in its own `_readme` — and
+[`docs/connectors/calendar-feeds.md`](connectors/calendar-feeds.md) has the
+click-path for finding that address in Google Calendar.
+
+Check the file without fetching anything:
+
+```
+node src/connectors/gcal-sync.mjs --validate
+```
+
+which lists every entry it can read - id, label and host, never a URL - prints
+any problem beside them, and writes and fetches nothing. It works even while the
+route is switched off, and says so, so you can check your work in either order.
+
+Three things the repository does to keep the secret a secret, so that you do not
+have to remember them:
+
+- the URL is **never** passed on a command line, printed in a log, quoted in an
+  error, or written into the payload
+- `data/gcal-feeds.json` is excluded from the state mirror, so it never reaches
+  a Drive document
+- `data/` is git-ignored in its entirety
+
+If a feed URL does leak, the fix is on the calendar's side: **reset the private
+address**, which invalidates the old one, and paste the new one in.
 
 | Key | What it does |
 |---|---|
@@ -271,7 +327,7 @@ not a value that loads quietly and then behaves as though you had left it out.
 An unknown key under `calendars.gcal` warns, exactly as an unknown top-level key
 does.
 
-**The switch is read by the code, not only by the runbook.** `render.mjs` opens
+**The switch is read by the code, not only by a runbook.** `render.mjs` opens
 `data/gcal-items.json` only while `enabled` is `true`, so turning the route off
 empties `meetings[]` on the next render even if the file is still there; and
 `gcal-ingest.mjs`, run while the block is off, prints one `skipped=disabled`
@@ -299,8 +355,9 @@ normally no reason to.
 
 ### What it never does
 
-It never writes to your calendar. `gcal-ingest.mjs` has no network access at all
-- it reads one local file and writes one local file - and the runbook step is
+It never writes to your calendar. Route A reads a feed over HTTPS and nothing
+else; `gcal-ingest.mjs` has no network access at all - it reads one local file
+and writes one local file - and an interactive session using route B is
 restricted to the connector's **list** and **get** tools. It also never stores
 attendee data: `attendees`, `organizer`, `creator` and conference details are
 not read, so they cannot reach the payload, the page, or a Drive document.
@@ -419,24 +476,56 @@ Adding a connector of your own: `docs/EXTENDING.md`, or say `/add-source`.
 "drive": {
   "enabled": true,
   "connectorName": "Google Drive",
+  "rcloneRemote": "agenda",
+  "rcloneExe": "[NOT SET]",
   "maxEmitChars": 12000,
   "maxMirrorChars": 20000,
   "mirror": true
 }
 ```
 
+**There are two halves to Drive and they are authorised separately.** The
+pipeline writes with `rclone`, a command-line program on your machine. The
+published page reads through the **Drive connector on your Claude account**.
+Neither one can stand in for the other, and `docs/connectors/google-drive.md`
+sets both up.
+
 | Key | What it does |
 |---|---|
-| `connectorName` | The display name your Claude account shows for its Drive connector. The page also probes for one that has the right tools, so this is a hint rather than a hard requirement |
-| `maxEmitChars` | **A real budget, not a guess.** The agent has to *type* the payload into a document, so its size costs tokens. `render.mjs` applies slim tiers until it fits and then prints which tier it used |
+| `connectorName` | The display name your Claude account shows for its Drive connector — the **read** half, used by the page. The page also probes for one that has the right tools, so this is a hint rather than a hard requirement |
+| `rcloneRemote` | The name of the rclone remote the pipeline writes through. You create it once: `rclone config create agenda drive scope=drive`, one browser click. Change it here only if that name is taken |
+| `rcloneExe` | A full path to `rclone` if it is not where the search below finds it. `[NOT SET]` is right on nearly every machine |
+| `maxEmitChars` | The payload size budget. `render.mjs` applies slim tiers until it fits and then prints which tier it used |
 | `maxMirrorChars` | The same cap for the state mirror. Over it, the pack exits 3 naming the biggest contributors |
-| `mirror` | Whether heavy runs push a full state mirror |
+| `mirror` | Whether the daily run pushes a full state mirror |
 
-**Raising `maxEmitChars` is usually the wrong fix.** If a run reports a high
-tier every time, the payload is genuinely large — many courses, many
-descriptions — and the honest answers are to reduce `scrapeWindowDays` or accept
-that far-off items lose their blurbs. See `docs/PROTOCOL.md` for what each tier
-drops.
+**`maxEmitChars` costs less than it used to.** In 1.x a model typed every one of
+those characters into a document and they cost tokens twice; `rclone` moves them
+now, for nothing. The budget stayed because a smaller document is faster for the
+page to fetch and parse — so raising it is defensible where it was not before,
+and reducing `scrapeWindowDays` is still the tidier fix. See `docs/PROTOCOL.md`
+for what each tier drops.
+
+**Where `rclone` is looked for**, in this order, first hit wins:
+
+1. `drive.rcloneExe`, if it is set to a real path
+2. the `RCLONE_EXE` environment variable
+3. `rclone` on your `PATH`
+4. the usual Windows package location
+
+So `RCLONE_EXE` **overrides** `PATH`, not the other way round — that is the one
+people get backwards when they are pinning a specific build.
+
+**Check the write half in one command:**
+
+```
+node src/drive-rclone.mjs status
+```
+
+`rclone=ok` (exit 0) means the remote answers. `rclone=missing` (exit 2) means
+the program is not installed. `rclone=auth-failed(...)` (exit 5) means it is
+installed and the remote is not authorised — run the `rclone config create` line
+above again.
 
 ---
 
@@ -454,11 +543,16 @@ drops.
 
 | Key | What it does |
 |---|---|
-| `artifact.url` | Filled after you publish the page once. See `docs/ARTIFACT.md` |
-| `notifications.emailDigest` | `"off"` · `"morning-only"` · `"every-run"`. **`"every-run"` is almost always a mistake** |
+| `artifact.url` | Filled after you publish the page once. See `docs/ARTIFACT.md`. It is also what the model puts at the bottom of the digest, so the email has a link to the page |
+| `notifications.emailDigest` | `"off"` · `"outlook"`. There is one run a day, so there is at most one digest a day and the old `"morning-only"` / `"every-run"` distinction has nothing left to distinguish. **Those two 1.x values still load**: they are mapped to `"outlook"` with one warning, because a config that loads with a warning beats an agenda that goes dark mid-term. Any *other* value is a `ConfigError` naming the key |
 | `notifications.digestTo` | Where the digest goes |
 | `push.newAssignments` | Whether a genuinely new item within 7 days may earn the run's one push |
 | `push.dueSoonUnsubmittedHours` | The window for a "this closes soon" push |
+
+`"outlook"` is the only sink in 2.0.0 and it is Windows-only: `src/send-digest.mjs`
+drives classic Outlook, and phase 2 logs `digest=SKIPPED(no-mail-sink)` anywhere
+else. For deadline reminders without Outlook, use the ICS calendar sink —
+`docs/connectors/calendar-ics.md`.
 
 **At most one push and one email per run, ever.** That cap is not configurable,
 and being behind buys *priority inside* it, never an extra send. Zero
@@ -470,33 +564,88 @@ un-ignorable, and "stop nagging me" is not "let me miss my exam".
 
 ---
 
-## Scheduling (Windows)
+## Scheduling
 
 ```jsonc
 "scheduler": {
   "taskPrefix": "Agenda",
-  "morningAt": "07:03", "eveningAt": "18:07",
-  "quietUntil": "07:23",
-  "syncWindow": ["09:00", "23:00"], "syncGapHours": 3,
+  "dailyAt": "10:30",
+  "quietUntil": "10:23",
+  "quietFrom": "23:00",
   "graceMinutes": 20, "debounceMinutes": 25, "maxRescuesPerLane": 2
 }
 ```
 
 | Key | What it does |
 |---|---|
-| `taskPrefix` | Task names become `<prefix> Morning`, `<prefix> Evening`, `<prefix> Sync`, `<prefix> StaleCheck`, `<prefix> AuthRetry` |
-| `morningAt` / `eveningAt` | When the two heavy runs fire. The odd minutes are deliberate — round times are congested |
-| `quietUntil` | The heavy lane never fires between midnight and this time. A full run at 03:00 can send mail |
-| `syncWindow` / `syncGapHours` | When the light lane runs, and how long a gap counts as "gone quiet" |
+| `taskPrefix` | Task names become `<prefix> Daily`, `<prefix> StaleCheck`, `<prefix> AuthRetry` |
+| `dailyAt` | **When the one daily run fires.** Local time, `HH:MM`. Pick an hour you are usually awake and the machine is usually on — there is no second chance later in the day |
+| `quietUntil` | The stale-run watchdog never rescues a run before this time. A full run at 03:00 can send mail and raise a push |
+| `quietFrom` | And never from this time onwards, for the same reason |
 | `graceMinutes` | How late a run may be before the watchdog calls it missed |
 | `debounceMinutes` | Logon, unlock and resume can all land within one second. Nothing fires twice inside this window |
 | `maxRescuesPerLane` | **Two.** Two attempts is generous; a third is a loop, not a rescue. See `docs/design-notes/watchdogs.md` |
+
+Set `dailyAt` a little before you actually want the agenda — a run takes several
+minutes, most of it in the scrape.
+
+**Upgrading from 1.x?** `morningAt`, `eveningAt`, `syncWindow` and `syncGapHours`
+no longer exist. A config that still carries them **loads normally** and prints
+one warning naming `scheduler.dailyAt`; nothing breaks and nothing is silently
+reinterpreted. The same courtesy applies to `notifications.emailDigest`:
+`"morning-only"` and `"every-run"` are mapped to `"outlook"` with a warning
+rather than refused. **A config that loads with a warning is better than an
+agenda that goes dark**, and a version bump that stops the run on a key you have
+not read about yet is exactly how that happens.
+
+Delete them when convenient, set `dailyAt`, and run
+`scripts\install-tasks.cmd /remove-legacy` to clear the three retired tasks.
 
 Change these here, then re-run `scripts\install-tasks.cmd` — it reads this block
 and re-asserts every task. **Do not edit a task by hand in the Task Scheduler
 UI**, because the next run of the installer will assert it back.
 
 macOS and Linux scheduling is in `docs/SCHEDULING.md`.
+
+---
+
+## The model window
+
+```jsonc
+"llm": {
+  "enabled": true,
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "maxTurns": 20,
+  "maxBudgetUsd": 1,
+  "timeoutMinutes": 45
+}
+```
+
+The daily run calls a language model **once**, for the two things a script cannot
+do: reading an email and deciding whether it carries a real deadline, and writing
+the sentence that makes a card mean something. This block is that window.
+
+| Key | What it does |
+|---|---|
+| `enabled` | `false` runs the whole pipeline with no model at all. The page still updates every day; mail is not triaged, new cards have no descriptions, and the run log says `llm=absent(disabled)` |
+| `model` | Which model the window uses. A mid-size model is the shipped default because the work is judgement on a pre-digested 10 KB file, not research |
+| `effort` | `low` · `medium` · `high` |
+| `maxTurns` | **A hard stop, not a budget to grow.** A healthy run is 8–13 turns |
+| `maxBudgetUsd` | The other hard stop. A healthy run is well under a third of this |
+| `timeoutMinutes` | How long the launcher waits before giving up on the window and finishing the run itself |
+
+**A run that hits `maxTurns` or `maxBudgetUsd` is a run to look at, not a cap to
+raise.** Hitting one almost always means the model is looping on something a
+script should be doing. Read that run in `data/runlog-stdout.txt` first.
+
+Every run appends turns, tokens and cost to `data/llm-usage.jsonl`;
+`/agenda-doctor` summarises the last seven. `docs/design-notes/daily-run.md` says
+what the numbers should look like and what to do when they climb.
+
+**None of the four tools the window gets is a connector**, so it cannot scrape,
+authenticate or reach Drive whatever the configuration says. That is a property
+of how it is launched, and `docs/SCHEDULING.md` has the exact flags.
 
 ---
 

@@ -10,11 +10,10 @@
 //
 // They are genuinely different. A run that fires on time, scrapes, hits a dead
 // session and exits 2 has HAPPENED - so the stale-run watchdog is correct to
-// stay silent, and no amount of tuning it would catch this. Meanwhile the heavy
-// lane tries to re-authenticate exactly once per run, by rule, which on the
-// shipped schedule means the retry interval for a failed login is eleven hours.
-// The light lane never scrapes and never authenticates at all. Nobody owned the
-// question, so this file does.
+// stay silent, and no amount of tuning it would catch this. Meanwhile the daily
+// run tries to re-authenticate exactly once, by rule, which on the shipped
+// schedule means the retry interval for a failed login is twenty-four hours.
+// Nobody owned the question in between, so this file does.
 //
 // ---------------------------------------------------------------------------
 // WHAT IT READS  (four small files; no network of its own, no LMS calls, no MCP
@@ -54,7 +53,7 @@
 //                  This is the whole health test, and it is why a HEALTHY
 //                  machine costs nothing: an LMS token lives about an hour, so
 //                  an expired session is the pipeline's normal resting state
-//                  between heavy runs. Firing on "expired" alone would mean two
+//                  between daily runs. Firing on "expired" alone would mean two
 //                  dozen pointless headless logins a day. Firing on "expired
 //                  AND the last thing that happened was a failure" fires only
 //                  when something is actually wrong.
@@ -62,7 +61,7 @@
 //                  previous ATTEMPT. The task ticks hourly, so this never blocks
 //                  the intended cadence; it blocks a burst (a manual run next to
 //                  a scheduled one, or the catch-up fire after a lid opens).
-//   heavy running  a heavy lane is Running -> skip. That run does its own
+//   run in flight  the daily task is Running -> skip. That run does its own
 //                  re-auth, and two headless browsers on one persistent profile
 //                  is a collision that crashes both. UNKNOWN counts as
 //                  not-running: a watchdog that goes quiet because a status
@@ -103,12 +102,12 @@
 //                            AUTH <ISO> fire=reauth reason=<why> result=<token>
 //                            exit=<n> [mfa=<n>] next=<what happens now>
 //                          Quiet checks add nothing - this runs 24x a day and a
-//                          heartbeat here would bury the heavy and light lanes
-//                          in a fortnight. The `AUTH ` prefix is inert to
+//                          heartbeat here would bury the daily lane in a
+//                          fortnight. The `AUTH ` prefix is inert to
 //                          stale-check.mjs's parser (it is not a bare ISO stamp,
 //                          not `SYNC `, not `STALE `), so this lane can never be
 //                          mistaken for a completed run - which would silently
-//                          mark a missed morning digest as delivered.
+//                          mark a missed digest as delivered.
 //   data/auth-mfa.json     the number-matching digits, the moment they appear,
 //                          with the ~90 s window they are good for. Overwritten
 //                          each time; stale once `expiresAboutAt` passes.
@@ -133,14 +132,18 @@
 // Exit codes:
 //   0  a decision was reached - INCLUDING "fired and the login failed". A failed
 //      login is this lane working, not this lane broken.
-//   1  the script itself broke (bad argument, unwritable state file).
+//   1  the script itself broke (bad argument, unwritable state file, or a
+//      config.json that will not load). A bad config prints ONE line naming the
+//      key and one naming `scripts/validate-setup.mjs` - never a stack - fires
+//      no login and writes no AUTH line, and still stamps `lastCheckAt` so the
+//      doctor can see the lane ran and why it stopped.
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import { derive, loadConfig, DEFAULTS } from "./lib/config.mjs";
+import { ConfigError, derive, loadConfig, DEFAULTS } from "./lib/config.mjs";
 import { argFlag, dataDir as resolveDataDir, repoRoot } from "./lib/paths.mjs";
 
 // --- constants ------------------------------------------------------------
@@ -245,15 +248,23 @@ export function authRetrySettings(cfg) {
 }
 
 /**
- * lane -> the scheduled task that owns it, derived from
- * `config.scheduler.taskPrefix`. Nothing in this file spells one out.
- * The light lane is deliberately absent: `runbooks/sync-run.md` forbids it from
- * scraping or authenticating, so it can never collide with us.
+ * The lanes whose runs do their OWN re-auth, and therefore the ones this lane
+ * must not start a second headless browser alongside. 2.0.0 runs the pipeline
+ * once a day, so this is the whole list: `<prefix> Daily` is the only task that
+ * can be holding the persistent browser profile when we want it. The two
+ * watchdog tasks never authenticate, so neither can ever collide with us.
+ *
+ * Derived from `config.scheduler.taskPrefix`; nothing in this file spells a
+ * task name out.
  */
 export function heavyTasks(cfg) {
   const t = derive(cfg).taskNames;
-  return Object.freeze({ morning: t.morning, evening: t.evening });
+  return Object.freeze({ daily: t.daily });
 }
+
+/** The lane keys `heavyTasks` produces, for the pure decision - which has no
+ *  config to derive them from. Keep the two in step. */
+export const HEAVY_LANES = Object.freeze(["daily"]);
 
 /** This lane's own scheduled task, for `--status` and the installer's table. */
 export function laneTask(cfg) {
@@ -402,7 +413,7 @@ export function decideAuthRetry({
 
   // A session file only ever gets rewritten by a login that worked, so its
   // `createdAt` is success evidence even for a login this lane never made (a
-  // heavy run's own re-auth, or the user running `scripts/reauth.mjs` by hand).
+  // daily run's own re-auth, or the user running `scripts/reauth.mjs` by hand).
   // mtime is the FALLBACK ONLY, for a session file whose JSON will not parse: it
   // is a far weaker signal (any tool that rewrites the file moves it) and must
   // never outrank the stamp the file itself carries.
@@ -433,7 +444,7 @@ export function decideAuthRetry({
     reason = "failure-after-success";
   } else {
     // Expired but nothing has failed since the last good login: the ordinary
-    // resting state between heavy runs. Not our business.
+    // resting state between daily runs. Not our business.
     unhealthy = false;
     reason = "no-failure-outstanding";
   }
@@ -454,7 +465,7 @@ export function decideAuthRetry({
     }
   }
 
-  for (const lane of ["morning", "evening"]) {
+  for (const lane of HEAVY_LANES) {
     const s = String(taskStates?.[lane] ?? "unknown").toLowerCase();
     if (s === "running") {
       detail.wouldFire = reason;
@@ -891,10 +902,11 @@ export const USAGE =
  * @param {string[]} argv
  * @param {object} [opts] injection seams for the tests: `dir` (repo root),
  *        `dataDir`, `home`, `cfg`, `now`, `runReauth`, `queryTaskState`,
- *        `relayMfaNumber`, `log`.
+ *        `relayMfaNumber`, `log`, `logErr`.
  */
 export async function cliMain(argv, opts = {}) {
   const say = opts.log ?? ((m) => console.log(`[auth-retry] ${m}`));
+  const sayErr = opts.logErr ?? ((m) => console.error(`[auth-retry] ${m}`));
   const args = parseArgs(argv);
   if (args.error) {
     say(args.error);
@@ -903,11 +915,9 @@ export async function cliMain(argv, opts = {}) {
   }
 
   const root = opts.dir ?? repoRoot();
-  const cfg = opts.cfg ?? loadConfig(argFlag(argv, "config") ?? null, { argv, warn: () => {} });
-  const settings = authRetrySettings(cfg);
   const dir = opts.dataDir ?? resolveDataDir(argv, root);
   const home = opts.home ?? argFlag(argv, "home") ?? homedir();
-  const tasks = heavyTasks(cfg);
+  const now = args.now ?? opts.now ?? new Date();
   const files = {
     runlog: join(dir, "runlog.txt"),
     state: join(dir, "auth-retry.json"),
@@ -915,10 +925,39 @@ export async function cliMain(argv, opts = {}) {
     inflight: join(dir, "auth-retry.lock"),
     authFailure: join(dir, "auth-failure.json"),
   };
+
+  // Loaded after the data directory is known, and inside a try, for the same
+  // reason `stale-check.mjs` does it: the two watchdogs are the only things on
+  // the machine that can report the run is gone, and a `config.json` with a
+  // trailing comma would otherwise kill the run AND both of them on the same
+  // line. A bad config is one line and exit 1 - no stack, no login, no AUTH
+  // line - and the heartbeat is still stamped so the doctor can see the lane
+  // ran and stopped.
+  let cfg;
+  if (opts.cfg) {
+    cfg = opts.cfg;
+  } else {
+    try {
+      cfg = loadConfig(argFlag(argv, "config") ?? null, { argv, warn: () => {} });
+    } catch (err) {
+      if (!(err instanceof ConfigError)) throw err;
+      // `err.message` already opens with "config: " - do not say it twice.
+      sayErr(`config: ${String(err.message).split("\n")[0].replace(/^config:\s*/, "")}`);
+      sayErr("fix: node scripts/validate-setup.mjs");
+      try {
+        writeJsonFile(files.state, readRetryState({ ...(readJson(files.state) ?? {}), lastCheckAt: isoSeconds(now) }));
+      } catch {
+        /* an unwritable data dir is already the louder problem; exit 1 says so */
+      }
+      return EXIT.broken;
+    }
+  }
+
+  const settings = authRetrySettings(cfg);
+  const tasks = heavyTasks(cfg);
   const sessionFile = sessionFileFor(home, settings.sessionFiles);
   const fire = opts.runReauth ?? runReauth;
   const query = opts.queryTaskState ?? queryTaskState;
-  const now = args.now ?? opts.now ?? new Date();
 
   if (args.clearLock) {
     if (!existsSync(files.lock)) {
@@ -951,7 +990,7 @@ export async function cliMain(argv, opts = {}) {
   };
 
   // Two passes so a quiet check costs zero scheduler spawns: only ask about the
-  // heavy lanes when we are otherwise about to fire. decideAuthRetry is pure, so
+  // daily task when we are otherwise about to fire. decideAuthRetry is pure, so
   // the second call - with the states filled in - is the authoritative one.
   let decision = decideAuthRetry({ ...base, taskStates: {} });
   if (decision.fire) {

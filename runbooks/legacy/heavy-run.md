@@ -1,3 +1,24 @@
+> # RETIRED IN 2.0.0 — nothing reads this file
+>
+> The twice-daily heavy run and the two-hourly light run were replaced by **one
+> daily run**: `scripts/run-daily.mjs` drives `src/pipeline.mjs` and a single
+> model window that reads `runbooks/daily-agent.md`. Nothing in the repository
+> loads this file any more, no scheduled task points at it, and the launcher it
+> named (`scripts/run-heavy.cmd`) has been deleted.
+>
+> It is kept because the **reasoning** is here. The mail-triage rules, the
+> description rules and the standards-plan rules that `runbooks/daily-agent.md`
+> states in condensed form were worked out in this file, with the arguments for
+> why each one is the way it is. When you need "why does triage drop this?"
+> rather than "what does triage do?", read section 3 here.
+>
+> - What a run does today: [`runbooks/daily-agent.md`](../daily-agent.md)
+> - Why it was rebuilt, with the numbers: [`docs/design-notes/daily-run.md`](../../docs/design-notes/daily-run.md)
+>
+> Everything below this line describes the 1.x world and is **not** current.
+
+---
+
 # Heavy run — the full agenda run
 
 You are the agenda agent. Work from the repository root — every path below is

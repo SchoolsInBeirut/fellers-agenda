@@ -13,8 +13,13 @@ node scripts/validate-setup.mjs
 ```
 
 Node ≥22, `git`, `gh` (optional), `claude`, write access to `data/`, whether
-`config.json` exists, the OS, and — Windows only — classic Outlook. It prints a
-fix link for every failure and never throws.
+`config.json` exists, the OS, the Drive transport, and — Windows only — classic
+Outlook. It prints a fix link for every failure and never throws.
+
+**It writes nothing, and it is local except for one call:** when `drive.enabled`
+is `true` it runs a read-only listing of the user's Drive remote to prove the
+transport works. Say so if they ask why a "preflight" touched the network. With
+Drive off it makes no calls at all.
 
 ## 2. Configuration
 
@@ -82,6 +87,25 @@ scrape: no LMS source is enabled.
 
 followed by a four-line fix. That is the first thing to fix.
 
+## 3b. The Drive transport
+
+```
+node src/drive-rclone.mjs status
+```
+
+One line, no upload, no publish. `rclone=ok` means the write half works;
+`rclone=missing` means `rclone` is not installed or not findable (`drive.rcloneExe`
+can point at it); `rclone=auth-failed(...)` means the remote is not authorised and
+the fix is one command — `rclone config create <remote> drive scope=drive`, which
+opens a browser. **Never run that command for them**: it ends in a consent screen
+only a human can approve.
+
+Skip this entirely when `drive.enabled` is not `true`, and say so in one line.
+
+Remember that Drive has **two halves**: this is the pipeline's write half, and
+the published page reads through the Drive connector on their Claude account.
+A page stuck on yesterday with a working `status` is the *read* half.
+
 ## 4. MCP servers
 
 ```
@@ -101,17 +125,34 @@ fails silently on Windows and is the most common cross-platform break. Flag it.
 
 Read the last few lines of `data/runlog.txt` if it exists. Report:
 
-- When the last heavy run and the last light run were.
+- When the last daily run was. Its line starts with a bare ISO instant; a
+  `SYNC ` line is a 1.x leftover and is not evidence of a run.
+- Whether it says `llm=ran` or `llm=absent(<reason>)`. `llm=absent` means the
+  model window did not happen and the launcher completed the run without it —
+  the page is current, but nothing was triaged or described.
 - Any `FAILED(...)` or `SKIPPED(...)` token that appears in more than one of the
   last five runs — a token that repeats is a real problem; a token that appeared
   once is usually weather.
 - Any `STALE ` lines from today. Those are the watchdog rescuing a missed run,
-  and **two of them for one lane in one day means something is failing before
-  the run reaches its log step** and needs a human.
+  and **two of them in one day means something is failing before the run reaches
+  its log step** and needs a human.
 - Any `AUTH ` lines. Those are the hourly auth lane attempting a login, and it
   writes one only when it actually fired. A repeating `result=MFA-PENDING` means
   nobody is answering the second factor; a `result=USAGE` means the lane is
   calling `reauth.mjs` wrongly, which is a code bug rather than a login problem.
+
+Then summarise the token ledger. Read the last seven records of
+`data/llm-usage.jsonl` (one JSON object per line, newest last) and report **one
+line**: the turns, output tokens and cost of the most recent run, and whether
+the seven-run picture is steady or climbing.
+
+> The rule: a healthy run is 8-13 turns and under 10,000 output tokens. **A run
+> over 15,000 output tokens or over 20 turns is a run to look at, not a cap to
+> raise.** Say which run, and point at `data/runlog-stdout.txt` for it and at
+> `docs/design-notes/daily-run.md`. Do not edit `llm.maxTurns` or
+> `llm.maxBudgetUsd` for them.
+
+If the file does not exist, say so in one line: no run has recorded usage yet.
 
 Then run, and report:
 
@@ -133,12 +174,17 @@ one.
 
 ## 6. Scheduling (only if they set it up)
 
-Windows: report whether the five tasks exist and when each last ran and next
-runs. Do not create, change, run or delete a task from this command — say what
-is wrong and let them run `scripts\install-tasks.cmd`, which is idempotent.
+Windows: report whether the **three** tasks exist — `<prefix> Daily`,
+`<prefix> StaleCheck`, `<prefix> AuthRetry` — and when each last ran and next
+runs. Also report any `<prefix> Morning`, `<prefix> Evening` or `<prefix> Sync`
+still registered from 1.x: those are retired, they point at launchers that no
+longer exist, and `scripts\install-tasks.cmd /remove-legacy` deletes exactly
+those three. Do not create, change, run or delete a task from this command — say
+what is wrong and let them run `scripts\install-tasks.cmd`, which is idempotent.
 
-macOS/Linux: check for the `launchd` plist or the `cron` entries described in
-`docs/SCHEDULING.md`.
+macOS/Linux: check for the two `launchd` plists (`com.agenda.daily`,
+`com.agenda.auth`) or the two `cron` lines described in `docs/SCHEDULING.md`.
+Mention any `com.agenda.heavy` / `com.agenda.sync` plist still loaded.
 
 ## Report
 

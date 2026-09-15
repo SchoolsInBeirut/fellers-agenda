@@ -37,6 +37,7 @@ import {
   BACKUP_KEEP,
   FIXTURES_DIR,
   ROOT_FILES,
+  SECRET_FILES,
   backupName,
   writeLocalBackup,
 } from "../src/drive-bundle.mjs";
@@ -140,6 +141,29 @@ test("the include list is a list: state in, renderings and artefacts out", () =>
   ]) {
     assert.equal(isMirrored(name), false, `${name} should NOT be mirrored`);
   }
+});
+
+test("gcal-feeds.json is never mirrored: the feed url is a bearer secret", () => {
+  // It ends in .json and is not a runlog, a sample or a rendering, so every other
+  // clause in isMirrored() would happily wave it through into a Google Doc. The
+  // whole point of the SECRET_FILES clause is that it does not.
+  assert.equal(isMirrored("gcal-feeds.json"), false);
+  assert.ok(SECRET_FILES.includes("gcal-feeds.json"));
+  // The events those feeds produce are ordinary derived state and still travel.
+  assert.equal(isMirrored("gcal-items.json"), true);
+});
+
+test("a feeds file in data/ is left out of the packed bundle entirely", () => {
+  withSandbox(
+    (root, data) => {
+      assert.ok(!mirrorPaths(root, data).includes("data/gcal-feeds.json"));
+      const { files } = collect(root, data);
+      assert.equal(files["data/gcal-feeds.json"], undefined);
+      // Belt and braces: the secret itself is nowhere in the bundle's bytes.
+      assert.ok(!JSON.stringify(files).includes("secret-ical-token"));
+    },
+    { "data/gcal-feeds.json": { v: 1, feeds: [{ id: "personal", url: "https://calendar.example/secret-ical-token/basic.ics" }] } },
+  );
 });
 
 test("mirrorPaths lists config.json first, then data/ alphabetically, and skips dirs", () => {

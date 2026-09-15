@@ -148,9 +148,17 @@ export const DEFAULTS = Object.freeze({
     },
   },
 
+  // `connectorName` is what the PAGE reads through (the user's own Drive
+  // connector, named here only so the page can say it in an error). The
+  // PIPELINE never uses a connector: `src/drive-rclone.mjs` moves every byte
+  // over the `rclone` CLI, and those two keys name the remote it talks to and
+  // the binary it runs. `rcloneExe` unset means "find it" - PATH first, then
+  // the usual per-platform install location.
   drive: {
     enabled: true,
     connectorName: "Google Drive",
+    rcloneRemote: "agenda",
+    rcloneExe: null,
     maxEmitChars: 12000,
     maxMirrorChars: 20000,
     mirror: true,
@@ -165,16 +173,34 @@ export const DEFAULTS = Object.freeze({
     push: { newAssignments: true, dueSoonUnsubmittedHours: 48 },
   },
 
+  // ONE run a day. `dailyAt` is the only boundary in the system: the scheduled
+  // task fires there, and `src/stale-check.mjs` calls the day missed if nothing
+  // has run by `dailyAt + graceMinutes`. The two quiet keys bracket the hours
+  // that watchdog may rescue in - never before `quietUntil`, never from
+  // `quietFrom` - because a rescue sends mail, may push, and wakes the fans.
   scheduler: {
     taskPrefix: "Agenda",
-    morningAt: "07:03",
-    eveningAt: "18:07",
-    quietUntil: "07:23",
-    syncWindow: ["09:00", "23:00"],
-    syncGapHours: 3,
+    dailyAt: "10:30",
+    quietUntil: "10:23",
+    quietFrom: "23:00",
     graceMinutes: 20,
     debounceMinutes: 25,
     maxRescuesPerLane: 2,
+  },
+
+  // The model window inside the daily run (`scripts/run-daily.mjs`). Scripts do
+  // every mechanical step; the model reads one work order, contributes judgment
+  // and verifies the report. `maxTurns` and `maxBudgetUsd` are HARD CAPS, not
+  // targets - a run that hits either is a run to look at, not one to widen.
+  // `enabled: false` turns the window off entirely and the page still updates,
+  // which is also what happens when `claude` is simply not installed.
+  llm: {
+    enabled: true,
+    model: "claude-sonnet-5",
+    effort: "medium",
+    maxTurns: 20,
+    maxBudgetUsd: 1,
+    timeoutMinutes: 45,
   },
 
   // The hourly "can we still log in?" lane (src/auth-retry.mjs). `sessionFiles`
@@ -325,6 +351,9 @@ function validate(cfg, warn) {
     );
   }
   validateCalendars(cfg, warn);
+  validateScheduler(cfg, warn);
+  validateLlm(cfg, warn);
+  validateNotifications(cfg, warn);
 }
 
 const typeError = (key, must, got) =>
@@ -375,6 +404,174 @@ function validateCalendars(cfg, warn) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// scheduler, llm, notifications
+// ---------------------------------------------------------------------------
+
+/**
+ * The 1.x scheduler keys, retired in 2.0.0 when the two heavy runs and the
+ * 2-hourly sync lane became one daily run.
+ *
+ * A config that still carries them is ACCEPTED. People upgrade by pulling, not
+ * by rewriting a file they have never opened, and refusing to draw somebody's
+ * week over a key nothing reads any more would be the worst of both worlds. So
+ * they are ignored, and the user is told ONCE - in one sentence, naming the one
+ * key that replaced all four.
+ */
+export const LEGACY_SCHEDULER_KEYS = Object.freeze(["morningAt", "eveningAt", "syncWindow", "syncGapHours"]);
+
+/** A local wall-clock time, 00:00 to 23:59. */
+const HHMM_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
+/** "10:30" -> 630. Only ever called on a string HHMM_RE has accepted. */
+const hhmmToMin = (s) => {
+  const [h, m] = String(s).split(":");
+  return Number(h) * 60 + Number(m);
+};
+
+function validateScheduler(cfg, warn) {
+  const s = cfg.scheduler;
+  if (!isPlain(s)) throw typeError("scheduler", "must be an object", s);
+
+  const legacy = LEGACY_SCHEDULER_KEYS.filter((k) => k in s);
+  if (legacy.length) {
+    const dailyAt = typeof s.dailyAt === "string" ? s.dailyAt : DEFAULTS.scheduler.dailyAt;
+    warn(
+      `config: "scheduler" still has ${legacy.join(", ")} from 1.x. ` +
+        `2.0.0 runs once a day, so the only boundary read is "scheduler.dailyAt" (${dailyAt}). ` +
+        "Those keys are ignored; delete them when convenient. See docs/CONFIG.md",
+    );
+  }
+
+  // The three clocks. `stale-check.mjs` and `setup-schedule.mjs` both fall back
+  // silently on a value they cannot parse, but `install-tasks.cmd` passes
+  // `dailyAt` STRAIGHT to `New-ScheduledTaskTrigger -Daily -At` - so "10.30"
+  // registers a task at one time and a watchdog that thinks the boundary is
+  // somewhere else entirely. One typo, two disagreeing clocks, no error. Refuse
+  // it here, once, where the key can be named.
+  for (const key of ["dailyAt", "quietUntil", "quietFrom"]) {
+    if (typeof s[key] !== "string" || !HHMM_RE.test(s[key].trim())) {
+      throw typeError(`scheduler.${key}`, 'must be a local time as "HH:MM", 00:00 to 23:59', s[key]);
+    }
+  }
+
+  // ...and the one arrangement of legal values that switches the watchdog off.
+  // `decideStale` calls the day missed at `dailyAt + graceMinutes` and refuses
+  // to fire outside [quietUntil, quietFrom). Put the boundary late enough - say
+  // 22:50 against the shipped 23:00 ceiling - and the earliest "late" moment is
+  // already inside quiet hours, so a missed run can never be rescued. That is a
+  // WARNING and not an error: the run itself still happens at `dailyAt`, and
+  // refusing to load would cost the user the whole agenda to save the watchdog.
+  const grace = Number.isFinite(Number(s.graceMinutes)) ? Number(s.graceMinutes) : DEFAULTS.scheduler.graceMinutes;
+  const fireAt = hhmmToMin(s.dailyAt.trim()) + grace;
+  const from = hhmmToMin(s.quietUntil.trim());
+  const to = hhmmToMin(s.quietFrom.trim());
+  if (!(fireAt >= from && fireAt < to)) {
+    warn(
+      `config: "scheduler.dailyAt" (${s.dailyAt}) plus graceMinutes (${grace}) falls outside ` +
+        `"scheduler.quietUntil" (${s.quietUntil}) to "scheduler.quietFrom" (${s.quietFrom}), ` +
+        "so the stale-run watchdog can never rescue a missed run. The run itself is unaffected. " +
+        "See docs/CONFIG.md",
+    );
+  }
+}
+
+/** The three effort levels `claude -p --effort` accepts. */
+export const LLM_EFFORTS = Object.freeze(["low", "medium", "high"]);
+
+/**
+ * `llm` - the model window's whole budget.
+ *
+ * Every value here becomes a command-line argument in `scripts/run-daily.mjs`,
+ * and two of them are the only thing standing between a wedged run and a
+ * fortnight of usage. A string where a number belongs would be passed straight
+ * through to a flag that silently accepts anything, so it is refused here.
+ */
+function validateLlm(cfg, warn) {
+  const llm = cfg.llm;
+  if (!isPlain(llm)) throw typeError("llm", "must be an object", llm);
+  warnUnknown(warn, "llm", llm, new Set(Object.keys(DEFAULTS.llm)));
+
+  if (typeof llm.enabled !== "boolean") {
+    throw typeError("llm.enabled", "must be true or false, not a string or a number", llm.enabled);
+  }
+  if (typeof llm.model !== "string" || !llm.model.trim()) {
+    throw typeError("llm.model", "must be a model name, as text", llm.model);
+  }
+  if (!LLM_EFFORTS.includes(llm.effort)) {
+    throw typeError("llm.effort", `must be one of ${LLM_EFFORTS.join(", ")}`, llm.effort);
+  }
+  for (const [key, min, max] of [["maxTurns", 1, 200], ["timeoutMinutes", 1, 600]]) {
+    if (!Number.isInteger(llm[key]) || llm[key] < min || llm[key] > max) {
+      throw typeError(`llm.${key}`, `must be a whole number from ${min} to ${max}`, llm[key]);
+    }
+  }
+  if (typeof llm.maxBudgetUsd !== "number" || !Number.isFinite(llm.maxBudgetUsd) || llm.maxBudgetUsd <= 0) {
+    throw typeError("llm.maxBudgetUsd", "must be a positive number of dollars", llm.maxBudgetUsd);
+  }
+}
+
+/** The only digest sink 2.0.0 has. `"off"` is the shipped answer. */
+export const EMAIL_DIGEST_SINKS = Object.freeze(["off", "outlook"]);
+
+/**
+ * Every 1.x spelling of `notifications.emailDigest`, and what it means now.
+ *
+ * 1.x asked WHEN to send ("morning-only" / "every-run"), because there were two
+ * heavy runs a day to choose between. 2.0.0 runs once, so the only question left
+ * is WHERE it goes - and the answer for all of these is the one sink there is.
+ * `true` and `false` are here for the same reason: they were the shape of the
+ * key before it named anything, and a boolean would otherwise read as ON to
+ * every truthiness test and as a sink to none.
+ *
+ * These are MAPPED, not refused. An upgrader who had the digest on pulls 2.0.0,
+ * and a ConfigError here takes down the launcher, the pipeline AND both
+ * watchdogs on the same line - the agenda goes dark with nothing anywhere to say
+ * why, which is the exact failure `docs/design-notes/watchdogs.md` exists to
+ * prevent. Same decision, same reasoning, as LEGACY_SCHEDULER_KEYS.
+ */
+export const LEGACY_EMAIL_DIGEST = Object.freeze(
+  new Map([
+    ["morning-only", "outlook"],
+    ["every-run", "outlook"],
+    [true, "outlook"],
+    [false, "off"],
+  ]),
+);
+
+/**
+ * `notifications.emailDigest` names a SINK, not a switch. The daily run's digest
+ * step matches it against one string, so there is exactly one string to match -
+ * and every value that used to mean something is normalised to one of the two
+ * before anything downstream sees it.
+ */
+function validateNotifications(cfg, warn) {
+  const n = cfg.notifications;
+  if (!isPlain(n)) throw typeError("notifications", "must be an object", n);
+
+  if (LEGACY_EMAIL_DIGEST.has(n.emailDigest)) {
+    const was = n.emailDigest;
+    // The one normalisation this loader performs. It is deliberate: the value
+    // travels to `send-digest.mjs` and to the pipeline's digest gate, and
+    // leaving the old spelling in place would push the translation into both.
+    n.emailDigest = LEGACY_EMAIL_DIGEST.get(was);
+    warn(
+      `config: "notifications.emailDigest" is ${JSON.stringify(was)}, which is a 1.x value. ` +
+        `2.0.0 names a sink rather than a schedule, so it is being read as ${JSON.stringify(n.emailDigest)}. ` +
+        `The values now are ${EMAIL_DIGEST_SINKS.map((s) => `"${s}"`).join(" and ")}. See docs/CONFIG.md`,
+    );
+    return;
+  }
+
+  if (!EMAIL_DIGEST_SINKS.includes(n.emailDigest)) {
+    throw typeError(
+      "notifications.emailDigest",
+      `must be ${EMAIL_DIGEST_SINKS.map((s) => `"${s}"`).join(" or ")} - "outlook" is the only digest sink in 2.0.0`,
+      n.emailDigest,
+    );
+  }
+}
+
 /**
  * Every derived name, in one pure function. Nothing else in the repo may
  * rebuild one of these strings.
@@ -399,10 +596,11 @@ export function derive(cfg) {
       commands: `${ns}-commands`,
     },
     storageKeys: { marks: `${ns}.marks.v1`, blocks: `${ns}.blocks.v1` },
+    // Three tasks in 2.0.0. `<prefix> Morning`, `<prefix> Evening` and
+    // `<prefix> Sync` are retired; `scripts/install-tasks.cmd /remove-legacy`
+    // is the only thing that deletes them, and only when asked.
     taskNames: {
-      morning: `${prefix} Morning`,
-      evening: `${prefix} Evening`,
-      sync: `${prefix} Sync`,
+      daily: `${prefix} Daily`,
       staleCheck: `${prefix} StaleCheck`,
       authRetry: `${prefix} AuthRetry`,
     },

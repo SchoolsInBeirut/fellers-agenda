@@ -74,7 +74,7 @@
 // B5_FIRE_ON_DECLINED to change this in one place.
 //
 // This file NEVER writes anything and never sends anything. It prints a verdict;
-// the playbook (runbooks/heavy-run.md 5b.4) decides what to do with it inside the one-push cap.
+// the playbook (runbooks/daily-agent.md, the push step) decides what to do with it inside the one-push cap.
 //
 // ---------------------------------------------------------------------------
 // CLI

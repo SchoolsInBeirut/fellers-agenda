@@ -13,13 +13,14 @@
 //
 // WHY SOME OF THEM ARE COMPRESSED
 //
-// Going out, the bytes are typed by a language model - it reads the payload
-// file and passes its exact contents as a tool argument. That makes size a real
-// budget rather than a nicety: an uncompressed payload costs more tokens to
-// move than a whole context window has. Gzip on JSON with highly repeated keys
-// wins about 6x, which turns a run that could not finish into one that finishes
-// with room to spare. Coming back, the page writes its own docs directly and no
-// model is in the path, so those stay plain and stay small.
+// In 1.x the outgoing bytes were typed by a language model - it read the payload
+// file and passed its exact contents as a tool argument, so an uncompressed
+// payload cost more tokens than a context window has. Since 2.0.0 a script
+// (src/drive-rclone.mjs) carries them over rclone and no model is in the path;
+// the compression stays because gzip on JSON with highly repeated keys wins
+// about 6x, a small document is what a phone reads fastest, and the checksum
+// still catches a torn export. Coming back, the page writes its own docs
+// directly, so those stay plain and stay small.
 //
 // WHY THERE IS A CHECKSUM
 //
@@ -228,8 +229,9 @@ function parse(json, prefix) {
 /**
  * How many characters this kind is allowed to occupy in a Doc.
  *
- * The payload budget is what an agent can realistically emit in one message;
- * the mirror budget is larger because a heavy run carries it alone. Both are
+ * The payload budget was set when an agent had to emit it in one message and is
+ * kept because a small document is what a phone reads fastest; the mirror budget
+ * is larger because the daily run carries it alone over rclone. Both are
  * config, because "realistically" moves as models change.
  */
 export function budgetOf(cfg, kind) {

@@ -69,7 +69,7 @@ to**, not all at once.
 | 2 | **Claude Code permission prompts** | Every new kind of command or file write. `.claude/settings.json` pre-approves a short list of read-only commands (`node --version`, the preflight, demo mode, the health check, `reauth --probe`, the test suite); everything else asks once | "I'm about to run X — you'll get a one-time approval prompt for it. That prompt is the point; this template deliberately does not turn them off" |
 | 3 | **A restart of Claude Code** | After `.mcp.json` is edited (Step 5) | "I've fixed the server entry. Claude Code reads that file when it starts, so close this session and run `claude` again — then say `continue setup`" |
 | 4 | **Your school's login page + a two-factor push** | Step 5, Brightspace only | Announced in full at Step 5 |
-| 5 | **A Google consent screen** | Step 9, and only after the Drive connector is added to their Claude account | Announced in full at Step 9 |
+| 5 | **A Google consent screen, twice** | Step 9: once in the browser `rclone config create` opens (the write half), and once the first time the published page fetches its data (the read half) | Announced in full at Step 9. Both are **Google's** screens, not this repo's |
 | 6 | **`gh auth login` — an interactive wizard** | Step 10, GitHub board only | Announced in full at Step 10. **They run it, not you** |
 | 7 | **A hidden password prompt** | Only if they enable Gradescope, which you do **not** set up in this session | Announced at Step 10 as a thing to read about later |
 
@@ -325,10 +325,13 @@ Then call `check_auth`, then `get_my_courses`, to prove the session works.
   they spend time on it: **a cloud session cannot reach a program on their
   laptop**, so the Brightspace path (a local stdio server) cannot work there at
   all. Canvas can, because it needs only a token. So: if they use Canvas, take
-  5a and carry on normally. If they use Brightspace, the honest answer is to run
-  setup and the heavy runs on their own machine — `docs/SCHEDULING.md`'s Cowork
-  section describes the hybrid where the light lane runs in the cloud. Do not
-  walk a Cowork user into 5b.
+  5a and carry on normally. If they use Brightspace, the honest answer is that
+  the agenda lives on their own machine. **Say the rest of it too, before they
+  invest an hour:** the daily run cannot be scheduled in a cloud session at all,
+  because publishing needs `rclone` on the machine that runs it and a schedule
+  needs a local scheduler. A cloud session is a place to run `/agenda-now` by
+  hand. `docs/SCHEDULING.md`'s Cowork section is the reference. Do not walk a
+  Cowork user into 5b.
 
 ## Step 6 — courses, automatically
 
@@ -388,12 +391,23 @@ see something of their own.
 ## Step 8 — first real run
 
 ```
-node src/scrape.mjs
-node src/render.mjs
+node scripts/run-daily.mjs --no-llm
 ```
 
-The scrape takes a few minutes on a first run. Say so before you start it, and
-run it in the background rather than leaving them staring at nothing.
+That is the whole pipeline with the model window skipped — exactly what the
+scheduled task does every day, minus the part that costs tokens. The scrape takes
+a few minutes on a first run. Say so before you start it, and run it in the
+background rather than leaving them staring at nothing.
+
+Then, once, the real thing:
+
+```
+node scripts/run-daily.mjs
+```
+
+which adds the one model window: it triages their mail, writes the descriptions
+on the new cards, and publishes. Tell them what the difference will look like -
+cards that explain themselves, and a mail panel that is not empty.
 
 > "That's your real agenda. Open `agenda.html`."
 
@@ -416,28 +430,63 @@ in; what stops is *live* refresh and the phone write-back, so ticking things off
 on the phone no longer reaches the pipeline.
 `docs/connectors/google-drive.md` has the detail. Then skip to Step 10.
 
-### 9.1 — the prerequisite nobody mentions
+### 9.1 — say the shape out loud first
 
-**The Google Drive connector has to exist on their Claude account before any
-consent screen can appear.** This is a step, not a troubleshooting row, and it
-happens first:
+Drive is authorised **twice**, for two different things, and somebody who does
+only one of them gets a failure that looks like the other. Say this before
+either:
+
+> "There are two bits. One is a small program called `rclone` on this computer —
+> that's how the pipeline writes your week into a document. The other is the
+> Google Drive connector on your Claude account — that's how the page on your
+> phone reads it. Different halves, and we need both."
+
+### 9.2 — the write half: `rclone` (one install, one click)
+
+Check first: `rclone version`. If it is missing, give them the one line for their
+machine — `winget install Rclone.Rclone` on Windows, `brew install rclone` on
+macOS, the install script from rclone's own site on Linux — and wait.
+
+Then, announced before it appears:
+
+> "Next command opens a **browser with a Google consent screen** asking for
+> access to your Drive. That's Google's own screen, not this repo. One click and
+> the tab closes itself."
+
+```
+rclone config create agenda drive scope=drive
+```
+
+**Never run that for them if the session cannot show them the browser**, and
+never claim it succeeded without checking:
+
+```
+node src/drive-rclone.mjs status
+```
+
+`rclone=ok` and this half is done. `agenda` must match `drive.rcloneRemote` in
+`config.json`. The token lives in rclone's own config file, not in this folder —
+say so, because people ask.
+
+### 9.3 — the read half: the connector on their Claude account
+
+**The Google Drive connector has to exist on their Claude account before the
+page can read anything.** This is a step, not a troubleshooting row:
 
 > "Open **claude.ai → Settings → Connectors**, and add **Google Drive** if it
 > isn't already there. That's on your Claude account, not in this folder — I
 > can't do it for you. Tell me when it's showing as connected."
 
-Wait for that. If they skip it, the publish will succeed and the page's refresh
-button will say *"Drive connector not available"*, which is a confusing place to
-discover a missing prerequisite.
-
-### 9.2 — the consent screen, described before it appears
+Wait for that. If they skip it, runs will publish perfectly happily and the
+page's refresh button will say *"Drive connector not available"*, which is a
+confusing place to discover a missing prerequisite.
 
 > "The first time the page fetches its data you'll see a **Google consent
-> screen** asking Claude for Drive access — that's Google's own screen, not this
-> repo. The page only ever creates and reads documents whose titles start with
-> `agenda-`, and it never deletes anything."
+> screen** asking Claude for Drive access — Google's own screen again. The page
+> only ever creates and reads documents whose titles start with `agenda-`, and
+> it never deletes anything."
 
-### 9.3 — publish
+### 9.4 — publish
 
 Follow `docs/ARTIFACT.md` §2, which has a numbered path for each client. In
 this session the short version is:
@@ -491,15 +540,22 @@ follow-up pitch.
   `gh auth refresh -s repo,read:org` — announce it, let them run it, then
   re-verify. Never run either of these from a tool call: it hangs or reads
   end-of-file, and the user sees a frozen session.
-- **Scheduling.** On Windows: `scripts\install-tasks.cmd`, which creates and
-  repairs all five scheduled tasks and is safe to run repeatedly. On macOS or
-  Linux there is no installer, so **you write the files for them** — generate
-  the three `launchd` plists or the crontab block from `docs/SCHEDULING.md`,
-  substituting the real repository path, show them the file you wrote, and give
-  them the one `launchctl load` or `crontab -e` line. Do not paste a template
-  with `$HOME/my-agenda` in it and leave them to substitute. In Cowork: cloud
-  schedules work, but **a cloud task cannot reach a local stdio server or
-  Outlook** — say that out loud rather than letting them find out at 07:03.
+- **Scheduling — three tasks, and one of them is the actual run.** Say what they
+  are before installing anything: `<prefix> Daily` (the run itself, once a day at
+  `scheduler.dailyAt`), `<prefix> StaleCheck` (did it happen?) and
+  `<prefix> AuthRetry` (can we still log in?). On Windows:
+  `scripts\install-tasks.cmd`, which creates and repairs all three and is safe to
+  run repeatedly; if it reports leftover `Morning` / `Evening` / `Sync` tasks
+  from 1.x, offer `scripts\install-tasks.cmd /remove-legacy` and let them decide.
+  On macOS or Linux there is no installer, so **you write the files for them** —
+  generate the two `launchd` plists (`com.agenda.daily`, `com.agenda.auth`) or
+  the two crontab lines from `docs/SCHEDULING.md`, substituting the real
+  repository path, show them the file you wrote, and give them the one
+  `launchctl load` or `crontab -e` line. Do not paste a template with
+  `$HOME/my-agenda` in it and leave them to substitute. In Cowork: **nothing can
+  be scheduled at all** — the publish needs `rclone` on the machine that runs it
+  and there is no local scheduler — so say that out loud rather than letting them
+  find out tomorrow morning.
 - **Gradescope.** Mention only that it exists, that it is off by default, and
   that enabling it means reading `extras/gradescope/README.md` first — including
   the part about checking their institution's and the service's terms, and the

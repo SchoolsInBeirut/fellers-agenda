@@ -83,8 +83,9 @@ catches. Both default to empty.
 
 **Those two strings are written by the model, not by the connector.** The
 connector's job is deterministic — sweep, filter, and emit each surviving message
-with an empty `gist` and a `null` `ask`. A later step in the heavy runbook reads
-the message body and fills them in. That split is the whole design of this repo:
+with an empty `gist` and a `null` `ask`. The model window then reads the message
+body and fills them in - `runbooks/daily-agent.md` is the step, and
+`src/mail-triage.mjs --apply` is what validates and writes the result. That split is the whole design of this repo:
 the connector does what a script can prove, and the model does the part that
 needs reading.
 
@@ -205,7 +206,7 @@ Set both to `false`. That is the entire change.
 |---|---|---|
 | Mail triage → deadline items | full sweep | **off.** The mail panel hides itself |
 | Deadline events with reminders | the Exchange sink | the **ICS sink**: one standard `.ics` file your calendar app subscribes to |
-| Dead-man's switch | an event 26 h out | **not available.** `deadman=SKIPPED(no-calendar-sink)` — an expected code, but it does mean the switch is unarmed |
+| Dead-man's switch | an event 30 h out | **not available.** `deadman=SKIPPED(no-calendar-sink)` — an expected code, but it does mean the switch is unarmed |
 | LMS, board, study model, planner, page, both write-back buses | identical | **identical** |
 
 The page is built and tested to render correctly with `mail: []`. It is not a

@@ -131,7 +131,7 @@ from that output, not from a README.
 
 **Close every client you open.** `ctx.mcp()` spawns a child process and nothing
 else cleans it up, so a `finally { await client?.close(); }` is not optional — a
-connector without one leaks a process on every run, twice a day, forever.
+connector without one leaks a process on every run, every day, forever.
 
 **Guard the shape of a tool result.** `call()` returns parsed JSON when it can
 and the **raw string** when it cannot. Iterating a string yields characters and

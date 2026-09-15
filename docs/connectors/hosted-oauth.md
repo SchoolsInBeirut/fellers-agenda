@@ -130,6 +130,8 @@ API token and no server of any kind, so it runs in a cloud environment as
 happily as on a laptop. `docs/connectors/canvas.md`. If your school runs Canvas,
 a cloud-only configuration is genuinely available to you.
 
-If your school runs Brightspace, `docs/SCHEDULING.md`'s Cowork section explains
-the workable hybrid: run the heavy lane on your laptop where the local server
-lives, and the light lane in the cloud, which only needs Drive.
+If your school runs Brightspace, the honest answer is that the agenda lives on
+your laptop: the local server is there, `rclone` is there, and so is the
+scheduler. A cloud session is then a place to run `/agenda-now` by hand, not a
+place to host it - `docs/SCHEDULING.md`'s Cowork section is explicit about what
+does and does not work there.

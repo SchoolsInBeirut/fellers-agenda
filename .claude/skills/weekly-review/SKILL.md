@@ -144,7 +144,7 @@ That is a success, not a wasted run.
 - **Never invent a study-log entry.** Do not infer minutes from focus blocks
   (those are a plan, not a fact), from calendar events, or from something
   becoming submitted.
-- **Two `STALE ` lines for one lane in one day** is not a planning problem. It
+- **Two `STALE ` lines in one day** is not a planning problem. It
   means runs are failing before they reach their log step. Point at
   `docs/design-notes/watchdogs.md` and `/agenda-doctor`, and do not try to fix it
   from here.

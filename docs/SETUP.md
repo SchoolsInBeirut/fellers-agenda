@@ -56,8 +56,8 @@ the default is how you end up believing you skipped a step you did not skip.
 | **6** your courses | **Manual only.** Needs a live `get_my_courses`. The preflight keeps FAILing on *"Your courses"* until this is done, which is the honest handover |
 | **7** your timetable | **Manual only.** It is in your head, not on disk |
 | **8** your first real run | **Manual only.** It prints the two commands |
-| **9** Google Drive | **Manual only.** The connector approval lives on your Claude account; publishing is `docs/ARTIFACT.md` |
-| **10** optional extras | **Partly.** It installs the scheduled tasks (Windows) or writes the exact `launchd`/`cron` files for your clone path (macOS/Linux). Mail, ICS, the board and Gradescope are untouched |
+| **9** Google Drive | **Partly.** It checks whether `rclone` is installed and prints either the install line or the one-time consent command — it never runs the consent command, because a script cannot click Allow. The connector approval lives on your Claude account, and publishing the page is `docs/ARTIFACT.md` |
+| **10** optional extras | **Partly.** It installs the three scheduled tasks (Windows) or writes the exact `launchd`/`cron` files for your clone path (macOS/Linux). Mail, ICS, the board and Gradescope are untouched |
 | **11** close out | **Does it.** Fills the six `CLAUDE.md` Part 2 fields, so the setup agent stops triggering on a greeting. Two of them — **School** and **Courses** — get a "not yet, here is what to do" sentence instead of a value when the wizard could not know, because writing `[NOT SET]` back would re-trigger the agent and leaving them blank would hide the work |
 
 **So the shortest honest path is:** `npm run setup`, then open the folder in
@@ -83,10 +83,10 @@ screen and prompt, in the order it arrives, so none of them is a surprise:
 | # | What appears | When |
 |---|---|---|
 | 1 | **"Do you trust the MCP servers in this project?"** | **The moment Claude Code opens this folder**, before you type anything. It fires because `.mcp.json` exists. Say yes — it only ever reads |
-| 2 | **Claude Code permission prompts**, one per new kind of command or file write | Throughout. `.claude/settings.json` pre-approves a short list of read-only commands — `node --version`, the preflight, demo mode, the health check, `reauth --probe` and the test suite. Everything else asks once: `node src/scrape.mjs`, `node src/render.mjs`, `claude mcp list`, and every write to `config.json` and `CLAUDE.md` |
+| 2 | **Claude Code permission prompts**, one per new kind of command or file write | Throughout. `.claude/settings.json` pre-approves a short list of read-only commands — `node --version`, the preflight, demo mode, the health check, `reauth --probe`, the test suite, `node src/pipeline.mjs --phase 1`, `node src/drive-rclone.mjs status` and `node scripts/run-daily.mjs --dry-run`. Everything else asks once: `node src/scrape.mjs`, `node src/render.mjs`, `claude mcp list`, and every write to `config.json` and `CLAUDE.md` |
 | 3 | **A restart of Claude Code** | Step 5, on Windows, after `.mcp.json` is corrected — Claude Code reads that file at session start |
 | 4 | **Your school's login page and a two-factor push** | Step 5, Brightspace only. Canvas skips this entirely |
-| 5 | **A Google consent screen** | Step 9, after you have added the Drive connector to your Claude account |
+| 5 | **A Google consent screen, twice** | Step 9. Once in the browser `rclone config create` opens — that is the pipeline's write access. Once more the first time the published page fetches its data, for the connector on your Claude account. Both are **Google's** screens, not this repo's |
 | 6 | **`gh auth login`**, an interactive wizard you type into yourself | Step 10, and only if you want the GitHub board |
 
 **None of these can be skipped or pre-granted by a repository**, and a template
@@ -106,6 +106,9 @@ You need:
 - **Claude Code** — [claude.com/claude-code](https://claude.com/claude-code)
 - **A school account** on Brightspace or Canvas. Both connectors ship; enable
   either or both
+- **`rclone`**, if you want the page to be live on your phone — a single
+  command-line program, installed in Step 9. Not needed if you set
+  `drive.enabled: false` and open `agenda.html` from disk
 
 You do **not** need Windows, Outlook, Python, Gradescope, a GitHub organisation,
 or anything paid beyond a Claude subscription.
@@ -147,8 +150,15 @@ against each check — Node, your operating system, Claude Code, `git`, `gh`
 writable, whether `config.json` exists yet **and loads with everything its
 enabled features need**, whether an LMS source is enabled *and* configured,
 whether the inbound calendar is on (and if so, whether a run has written
-`data/gcal-items.json` yet), `.mcp.json`, and on Windows whether classic Outlook
-is present.
+`data/gcal-items.json` yet), whether the **Drive transport** works (`rclone`
+installed and its remote authorised, or `(off)` when Drive is disabled), whether
+`llm.model` is set, `.mcp.json`, and on Windows whether classic Outlook is
+present.
+
+**It writes nothing, and one check leaves your machine:** with `drive.enabled`
+set, the Drive-transport check runs a read-only listing of your Drive remote.
+Nothing in your Drive changes, and with Drive off the preflight makes no network
+call at all.
 
 A NOTE is context, not a problem. `config.json: not created yet` is the correct
 state before setup.
@@ -387,9 +397,13 @@ login, and writes `data/auth-probe.json` with no credentials in it.
 
 **A cloud session cannot reach a program on your laptop**, so the Brightspace
 path above — a local stdio server — cannot work there at all. Canvas can, because
-it needs only a token. If your school runs Brightspace, run setup and the heavy
-runs on your own machine; `docs/SCHEDULING.md`'s Cowork section describes the
-hybrid where only the light lane runs in the cloud.
+it needs only a token.
+
+Two other pieces are local by construction: the publish runs `rclone`, and the
+schedule needs Task Scheduler, `launchd` or `cron`. **So the daily run cannot be
+scheduled in the cloud**, and a cloud session is a place to run `/agenda-now` by
+hand rather than a place to host the agenda. `docs/SCHEDULING.md`'s Cowork
+section says exactly what does and does not work there.
 
 ### If your school uses something else
 
@@ -448,18 +462,46 @@ own.
 
 ## Step 8 — your first real run
 
+Do it in two goes. The first one has no language model in it at all:
+
 ```
-node src/scrape.mjs
-node src/render.mjs
+node scripts/run-daily.mjs --no-llm
 ```
 
-The scrape takes a few minutes the first time.
+That runs the whole pipeline — scrape, merge, study model, planner, render — and
+skips the one step that calls a model. The scrape takes a few minutes the first
+time, and everything it prints is a one-line summary per step.
 
 **What should have happened:** `agenda.html` opens on your own classes, your own
-deadlines, your own week.
+deadlines, your own week. Cards will have no descriptions yet and mail will not
+be triaged; that is the step you just skipped, not a fault.
 
 **This is the moment the product is delivered.** Everything after this step is
 optional and you can stop here with a working thing.
+
+Then the real thing, once:
+
+```
+node scripts/run-daily.mjs
+```
+
+which does the same and adds the model window — one `claude -p` session, about
+eight to thirteen turns, which triages your mail, writes the missing
+descriptions, and publishes. It is exactly what the scheduled task will run every
+day.
+
+**What should have happened:** a single line appended to `data/runlog.txt`
+starting with a timestamp, with a token per step. `verify=ok` at the end and no
+`FAILED` token is a good run. `llm=absent(...)` means the model could not be
+started and the rest of the run completed without it — the page is still
+up to date, and `docs/TROUBLESHOOTING.md` has the causes.
+
+Two flags worth knowing:
+
+| Flag | What it does |
+|---|---|
+| `--dry-run` | Prints the five commands it would run, fully quoted, and runs none of them |
+| `--no-llm` | Runs everything except the model window. Cheap, and the right thing to reach for when you are debugging a connector |
 
 ---
 
@@ -468,31 +510,77 @@ optional and you can stop here with a working thing.
 ### 9.0 — no Google account?
 
 That is a **supported configuration**, not a failure. Set `drive.enabled: false`
-in `config.json` and skip to Step 10. `agenda.html` still renders on every run
+in `config.json` and skip to Step 10 — you will not need `rclone` either. `agenda.html` still renders on every run
 with your whole week baked into it, and you open it from disk. What you lose is
 *live* refresh and the phone write-back, so ticking things off on a phone no
 longer reaches the pipeline. `docs/connectors/google-drive.md` has the detail.
 
-### 9.1 — the prerequisite, first
+### 9.1 — two halves, and you need both
 
-**The Google Drive connector has to exist on your Claude account before any
-consent screen can appear.** Open **claude.ai → Settings → Connectors** and add
-**Google Drive** if it is not already there. That is on your Claude account, not
-in this folder, and nothing in this repository can do it for you.
+Drive is authorised **twice**, for two different things, and skipping either one
+fails in a way that looks like the other.
 
-Skip it and the publish still succeeds — but the page's refresh control says
+| Half | What it is for | What you do |
+|---|---|---|
+| **Writing** | the pipeline putting your week into a document | install `rclone` and give it one consent click — 9.2 |
+| **Reading** | the published page fetching that document, and your phone reading the brief | add the **Google Drive connector** on your Claude account — 9.3 |
+
+### 9.2 — the write half: `rclone`
+
+Install it:
+
+| | |
+|---|---|
+| Windows | `winget install Rclone.Rclone` |
+| macOS | `brew install rclone` |
+| Linux | `curl https://rclone.org/install.sh \| sudo bash` |
+
+`npm run setup` checks whether it is there and prints the right line for your
+machine; it does not install it for you, for the same reason it does not install
+Node.
+
+Then, once:
+
+```
+rclone config create agenda drive scope=drive
+```
+
+> A **Google consent screen** opens in your browser, asking for access to your
+> Drive. Approve it. The tab closes itself and `rclone` prints the finished
+> remote.
+
+That is **Google's** screen, not this repository's. `agenda` is the remote's name
+and it has to match `drive.rcloneRemote` in `config.json`. The token is stored in
+rclone's own config file, not in this folder.
+
+Check it:
+
+```
+node src/drive-rclone.mjs status
+```
+
+`rclone=ok` and this half is done. **Nothing here will ever run that consent
+command for you** — a scheduled script cannot click Allow in a browser, which is
+exactly why this is a step you do by hand.
+
+### 9.3 — the read half: the connector on your Claude account
+
+**The Google Drive connector has to exist on your Claude account before the page
+can read anything.** Open **claude.ai → Settings → Connectors** and add **Google
+Drive** if it is not already there. That is on your Claude account, not in this
+folder, and nothing in this repository can do it for you.
+
+Skip it and runs publish perfectly happily — but the page's refresh control says
 *"Drive connector not available"*, which is a confusing place to find out.
-
-### 9.2 — the screen, described before it appears
 
 > A **Google consent screen** asks Claude for Drive access.
 
-That is **Google's** screen, not this repository's. The page only ever creates and
-reads documents whose titles start with your namespace — `agenda-data`,
-`agenda-completions`, `agenda-commands`, `agenda-mirror`. It never touches
-anything else in your Drive, and it never deletes anything it did not create.
+The page only ever creates and reads documents whose titles start with your
+namespace — `agenda-data`, `agenda-completions`, `agenda-commands`,
+`agenda-mirror`. It never touches anything else in your Drive, and it never
+deletes anything at all.
 
-### 9.3 — publish
+### 9.4 — publish
 
 Follow [`docs/ARTIFACT.md`](ARTIFACT.md) §2, which has a numbered path for each
 client — the agent publishing it for you in Claude Code, or you uploading it
@@ -517,7 +605,7 @@ Offered one at a time. Say no to any of them and nothing is lost.
 | **Outlook** | Mail triage, plus deadline events on an Exchange calendar that push to your phone, plus the dead-man's switch | Windows and **classic** Outlook. `docs/connectors/outlook.md` |
 | **ICS calendar** | Deadline reminders on any platform: one standard `.ics` file your calendar app subscribes to | Nothing. `docs/connectors/calendar-ics.md`. It does **not** give you the dead-man's switch |
 | **Side-project board** | Non-course work becomes visible so it stops losing silently to whatever the LMS is shouting about | A GitHub org, and `gh auth login` — see the warning below. `docs/connectors/github.md` |
-| **Scheduling** | It runs by itself, twice a day plus a two-hourly sync | `npm run setup` offers this last — `scripts\install-tasks.cmd` on Windows, and on macOS/Linux it prints the `launchd` plists or crontab block with your clone's real path already in them. `docs/SCHEDULING.md` has all three |
+| **Scheduling** | It runs by itself, once a day | `npm run setup` offers this last — `scripts\install-tasks.cmd` on Windows (three tasks: the daily run and two watchdogs), and on macOS/Linux it prints the two `launchd` plists or the two crontab lines with your clone's real path already in them. `docs/SCHEDULING.md` has all three platforms |
 | **Gradescope** | Submission status from an external grading service | **Off by default.** Read `extras/gradescope/README.md` — including the part about checking your institution's and the service's terms — before enabling it |
 
 ### Two of these stop and wait for you to type

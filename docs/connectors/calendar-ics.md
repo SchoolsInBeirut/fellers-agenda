@@ -120,7 +120,7 @@ due this week. If the alarm is there and the time is right, it works.
 
 **It does not host the dead-man's switch, and nothing on this path can.**
 
-The dead-man's switch plants a calendar event about 26 hours out and relies on a
+The dead-man's switch plants a calendar event about 30 hours out and relies on a
 calendar *service* to ring it when this machine is gone — that is the entire
 point of an off-machine watchdog. A file on the disk of a machine that is
 switched off rings nothing, and a subscription that re-reads it every 8–24 hours

@@ -166,11 +166,9 @@
 
   "scheduler": {
     "taskPrefix": "Agenda",
-    "morningAt": "07:03",
-    "eveningAt": "18:07",
-    "quietUntil": "07:23",
-    "syncWindow": ["09:00", "23:00"],
-    "syncGapHours": 3,
+    "dailyAt": "10:30",
+    "quietUntil": "10:23",
+    "quietFrom": "23:00",
     "graceMinutes": 20,
     "debounceMinutes": 25,
     "maxRescuesPerLane": 2

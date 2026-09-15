@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  What an EXPIRED or RESET secret address actually returns: a sign-in page, with
+  a cheerful 200 and a text/html content type, so neither the status check nor
+  the content-type check catches it. Only the "is this an iCalendar body at all"
+  check does - which is why that check exists and why this fixture is here.
+  Anything that trusted the status code would write an empty calendar and call it
+  a successful run, and the user's meetings would quietly vanish from the grid.
+
+  This file must therefore never contain the iCalendar opening line, in a comment
+  or anywhere else, or it stops being the thing it is here to test.
+-->
+<html lang="en">
+  <head><title>Sign in</title></head>
+  <body>
+    <h1>Sign in to continue</h1>
+    <p>This link is no longer valid. Sign in to your calendar to continue.</p>
+  </body>
+</html>

@@ -84,7 +84,7 @@
 
   "calendars": {
     "gcal": {
-      "_comment": "INBOUND: your own meetings, read into the agenda so the planner never books study over one. Off by default - it needs a calendar connector authorized in your own Claude account, and a scheduled run fetches the events itself (docs/CONFIG.md and runbooks/heavy-run.md). calendarId is what you pass that connector, usually 'primary' or the calendar's address. feed prefixes every key (lowercase letters, digits and hyphens, at most 24 characters; 'fb' is refused because that prefix already names study sessions) and label is what the page shows. skipUidSuffix is the loop guard that stops the agenda re-importing the deadlines its own ICS sink published: [NOT SET] means derive it from `namespace`, which is right unless you have renamed things. connectors.calendar.* is the OTHER direction - a sink that writes deadlines out.",
+      "_comment": "INBOUND: your own meetings, read into the agenda so the planner never books study over one. Off by default - it needs a calendar connector authorized in your own Claude account, and the daily run fetches the events itself (docs/CONFIG.md). calendarId is what you pass that connector, usually 'primary' or the calendar's address. feed prefixes every key (lowercase letters, digits and hyphens, at most 24 characters; 'fb' is refused because that prefix already names study sessions) and label is what the page shows. skipUidSuffix is the loop guard that stops the agenda re-importing the deadlines its own ICS sink published: [NOT SET] means derive it from `namespace`, which is right unless you have renamed things. connectors.calendar.* is the OTHER direction - a sink that writes deadlines out.",
       "enabled": false,
       "calendarId": "primary",
       "feed": "calendar",
@@ -150,8 +150,11 @@
   },
 
   "drive": {
+    "_comment": "The page reads your agenda through the Google Drive connector on your Claude account (connectorName is only what the page calls it). The daily run does NOT: src/drive-rclone.mjs moves every byte over the rclone CLI, so nothing in a scheduled run needs a connector or a consent screen. rcloneRemote is the remote name you create once with `rclone config create agenda drive scope=drive`; rcloneExe is [NOT SET] unless rclone lives somewhere PATH cannot see.",
     "enabled": true,
     "connectorName": "Google Drive",
+    "rcloneRemote": "agenda",
+    "rcloneExe": "[NOT SET]",
     "maxEmitChars": 12000,
     "maxMirrorChars": 20000,
     "mirror": true
@@ -167,15 +170,24 @@
   },
 
   "scheduler": {
+    "_comment": "One run a day, at dailyAt local. quietUntil and quietFrom bracket the hours the stale-run watchdog may rescue a missed day in - a rescue sends mail, may push and wakes the fans, so it never happens at 03:00. graceMinutes is how late is late; debounceMinutes is the floor between two rescues; maxRescuesPerLane is the whole day's ration.",
     "taskPrefix": "Agenda",
-    "morningAt": "07:03",
-    "eveningAt": "18:07",
-    "quietUntil": "07:23",
-    "syncWindow": ["09:00", "23:00"],
-    "syncGapHours": 3,
+    "dailyAt": "10:30",
+    "quietUntil": "10:23",
+    "quietFrom": "23:00",
     "graceMinutes": 20,
     "debounceMinutes": 25,
     "maxRescuesPerLane": 2
+  },
+
+  "llm": {
+    "_comment": "The model window inside the daily run. maxTurns and maxBudgetUsd are hard caps, not targets: a run that hits either is a run to look at, not one to widen - data/llm-usage.jsonl is the ledger. enabled: false skips the window entirely and the page still updates, which is also what happens when `claude` is not installed. effort is low, medium or high.",
+    "enabled": true,
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "maxTurns": 20,
+    "maxBudgetUsd": 1,
+    "timeoutMinutes": 45
   },
 
   "authRetry": {

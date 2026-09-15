@@ -29,23 +29,27 @@ failed at its first step.
 
 ## Watchdog 1 — the stale-run check (inside the machine)
 
-`src/stale-check.mjs`, launched by `scripts/stale-check.vbs` from a fourth
-scheduled task.
+`src/stale-check.mjs`, launched by `scripts/stale-check.vbs` from the second of
+the three scheduled tasks.
 
 **Catches:** a machine that was merely *asleep* at the boundary.
 
-This is by far the more common case. The laptop was shut at 07:03. `Start when
+This is by far the more common case. The laptop was shut at 10:30. `Start when
 available` only rescues a run the scheduler itself *deferred* — not one the
 machine slept clean through. So the run simply never happened, and there is no
 record anywhere that it was supposed to.
 
 ### What it does
 
-It reads two files, decides one thing, and usually does nothing at all.
+It reads two files, decides one thing, and usually does nothing at all. It never
+acts outside its quiet window - never before `scheduler.quietUntil`, never from
+`scheduler.quietFrom` - because a rescued run can send mail and raise a push, and
+one at 03:00 is a worse outcome than a missed day.
 
 The thing it decides: **was a run supposed to have happened by now, and did it
-not?** If the newest heavy line in `data/runlog.txt` predates a boundary that has
-already passed today, that run was missed.
+not?** If the newest daily-run line in `data/runlog.txt` predates the boundary,
+and the boundary has already passed today, that run was missed. There is one
+boundary now — `scheduler.dailyAt` — where 1.x had three.
 
 When it decides yes, it starts **the same scheduled task the scheduler should
 have started** — never the launcher script directly. That distinction is
@@ -83,29 +87,31 @@ and a disabled watchdog protects nothing. `wscript.exe` has no console of its
 own, and running node from it with window style 0 starts it fully hidden. That is
 the entire content of `scripts/stale-check.vbs`, and it is why the file exists.
 
-### Two rescues per lane per day, and no more
+### Two rescues a day, and no more
 
 The watchdog reads its own `STALE ` lines back to count how many times it has
-already rescued each lane today, and stops at two — two morning rescues, two
-evening, two sync, each independent.
+already rescued today, and stops at two. (The heading says "per lane" because
+1.x had three lanes to count separately. There is one now, and the ration is two
+rescues per local day.)
 
-The reason it **must** stop: the trigger for "the morning was missed" is "no
-heavy line dated after the boundary today". A run that dies *before* it reaches
+The reason it **must** stop: the trigger for "today's run was missed" is "no
+daily line dated after the boundary today". A run that dies *before* it reaches
 its logging step leaves that condition true forever, so the lane would re-fire
 every twenty-five minutes until the next boundary. Two attempts is generous; a
 third is a loop, not a rescue.
 
-A capped lane goes quiet rather than falling through to a smaller one.
+Once capped, it goes quiet until tomorrow's boundary.
 
-**The consequence for an agent: if you cannot complete a run, write your log line
-anyway.** A run that logs why it stopped keeps the count honest and tells the user
-what happened. Two `STALE ` lines for one lane in one day is the signal that
-something is failing before the log step, and that needs a human.
+**The consequence: whatever stops a run, the log line still gets written.** Both
+`pipeline.mjs --finish` and the launcher are built around that — a run that logs
+why it stopped keeps the count honest and tells the user what happened. Two
+`STALE ` lines in one day is the signal that something is failing before the log
+step, and that needs a human.
 
-This is also why `STALE ` lines are the one lane that is **never trimmed** from
-the run log. They are the rarest lane (a good week produces zero), they cost
-nothing, and trimming one would silently refill a lane's ration. The rule is
-load-bearing, not tidy.
+This is also why `STALE ` lines are **never trimmed** from the run log. They are
+the rarest thing in it (a good week produces zero), they cost nothing, and
+trimming one would silently refill the day's ration. `AUTH ` lines are protected
+the same way and for the same reason. The rule is load-bearing, not tidy.
 
 ---
 
@@ -121,7 +127,7 @@ machine.
 
 ### What it does
 
-Each successful run plants **one** calendar event about 26 hours out, through a
+Each successful run plants **one** calendar event about 30 hours out, through a
 calendar sink that can host it, with a reminder set at the event time. The next
 successful run deletes it and plants the next one.
 
@@ -129,11 +135,11 @@ successful run deletes it and plants the next one.
 not an oversight, it is the definition doing its work: the switch has to ring
 from something that is *not this machine*. The ICS sink writes a file on the
 machine that stopped, and a calendar app re-reads a subscribed file on its own
-schedule — typically every 8 to 24 hours — so an event planted 26 hours out is
+schedule — typically every 8 to 24 hours — so an event planted 30 hours out is
 not something it can be trusted to deliver on time. A watchdog you cannot trust
 is worse than none, because you stop watching yourself.
 
-So in normal operation the event is created and destroyed twice a day and the
+So in normal operation the event is created and destroyed once a day and the
 user never sees it. They see it exactly once: **when a run did not happen.** And
 it fires from a calendar service, which is not this machine — so it reaches the
 user's phone even if the laptop is at the bottom of a lake.
@@ -149,7 +155,7 @@ the moment something was already going wrong.
 
 Done in the right order, a failed create leaves the previous event exactly where
 it is, and the switch stays armed on the old timer. Worst case you get an alarm
-26 hours after the last *successful* run instead of the last *attempted* one,
+30 hours after the last *successful* run instead of the last *attempted* one,
 which is the correct behaviour.
 
 ### It is optional and says so
@@ -174,15 +180,15 @@ do".
 
 ## Watchdog 3 - the auth lane (a different question entirely)
 
-`src/auth-retry.mjs`, launched by `scripts/auth-retry.vbs` from a fifth scheduled
-task, on the same logon / unlock / resume triggers as the stale-run check but on
-an hourly floor instead of a half-hourly one.
+`src/auth-retry.mjs`, launched by `scripts/auth-retry.vbs` from the third
+scheduled task, on the same logon / unlock / resume triggers as the stale-run
+check but on an hourly floor instead of a half-hourly one.
 
 **The two above ask "did a run happen?". This one asks "can we still log in?"**
 That distinction is the entire reason it exists, and it is easy to miss until you
 have watched it fail.
 
-Consider the sequence that produced it. The morning run fires exactly on time.
+Consider the sequence that produced it. The daily run fires exactly on time.
 It reads its runbook, calls `src/scrape.mjs`, and the scrape hits an expired
 session and exits 2. Per the runbook it tries `scripts/reauth.mjs --silent`
 exactly once - correctly, because a run that hammers a login is a run that locks
@@ -191,7 +197,7 @@ not publish stale data. All of that is right.
 
 Now look at what the other two watchdogs see.
 
-- The stale-run check asks whether a run happened by the morning boundary. **It
+- The stale-run check asks whether a run happened by today's boundary. **It
   did.** The check is satisfied and stays silent, which is the correct behaviour
   for the question it is asking. No amount of tuning its grace period, its
   debounce or its daily cap would have caught this, because nothing it measures
@@ -199,16 +205,16 @@ Now look at what the other two watchdogs see.
 - The dead-man's switch asks whether this machine is still alive. **It is.** It
   is re-armed by the next lane that runs, so it never rings.
 
-So the agenda sits unauthenticated until the evening run, eleven hours later,
-which tries once more and stops for the same reason. Without this lane, the
-retry interval for a failed login is *half a day*.
+So the agenda sits unauthenticated until tomorrow's run, which tries once more
+and stops for the same reason. Without this lane, the retry interval for a failed
+login is *a whole day* — and it was half a day even when there were two runs.
 
 ### What makes it free on a healthy machine
 
 The obvious rule - "retry whenever the session is expired" - is wrong, and
-expensively so. An LMS token lives about an hour and the heavy runs are eleven
-hours apart, so **an expired session is the pipeline's normal resting state for
-most of the day.** Firing on that alone would mean two dozen headless logins a
+expensively so. An LMS token lives about an hour and there is one run a day, so
+**an expired session is the pipeline's normal resting state for almost all of
+it.** Firing on that alone would mean two dozen headless logins a
 day on a machine where nothing is wrong, each one able to raise a second-factor
 prompt at somebody who did not ask for one.
 
@@ -249,12 +255,12 @@ feature rather than two.
 | **Asks** | Did a run happen? | Is this machine alive? | Can we still log in? |
 | **Runs on** | This machine | A calendar service | This machine |
 | **Catches** | A machine that was asleep at the boundary | A machine that is gone | A run that happened and failed at step one |
-| **Notices within** | Seconds of the machine becoming usable | About 26 hours | An hour, or seconds of the machine waking |
+| **Notices within** | Seconds of the machine becoming usable | About 30 hours | An hour, or seconds of the machine waking |
 | **Acts by** | Starting the missed run | Ringing the user's phone | Retrying the login, and relaying any prompt it raises |
 | **Fails silently if** | The machine never wakes | Every run fails before it can arm | Never - a credential rejection stops it loudly and on purpose |
 
 Each one's blind spot is another one's whole purpose. The first catches a machine
-that was merely asleep at 07:03; the second catches a machine that is not coming
+that was merely asleep at 10:30; the second catches a machine that is not coming
 back; the third catches the case both of the others are *right* to ignore. None
 is sufficient, and together they cover the space.
 

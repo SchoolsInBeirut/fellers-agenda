@@ -4,7 +4,7 @@
 // ===========================================================================
 //  `docs/SETUP.md` is eleven steps and every one is honest work. Most of it is
 //  mechanical: copy a file, answer five questions, run the preflight, render the
-//  demo, install five scheduled tasks. This does the mechanical part and stops -
+//  demo, install three scheduled tasks. This does the mechanical part and stops -
 //  loudly - wherever a human is genuinely required: a two-factor push, a Google
 //  consent screen, an approval inside claude.ai. It never pretends those can be
 //  automated and never works around one.
@@ -40,7 +40,7 @@ import {
 } from "./lib/setup-config.mjs";
 import { fillSentinels, fieldValues, hasSentinels, isoDate, SENTINEL } from "./lib/setup-claudemd.mjs";
 import { schedulePlan } from "./lib/setup-schedule.mjs";
-import { banner, isExpectedFail, nextSteps, openCommand, parseFails } from "./lib/setup-report.mjs";
+import { banner, isExpectedFail, nextSteps, openCommand, parseFails, rcloneSteps } from "./lib/setup-report.mjs";
 import { askChoice, askUntil, hasTty, makeAsk, SetupEofError, yesNo } from "./lib/setup-ask.mjs";
 import { makePrinter, makeRunner, probe, readJson, stop } from "./lib/setup-io.mjs";
 import { checkMachine } from "./lib/setup-machine.mjs";
@@ -149,6 +149,34 @@ function wrapMcpForWindows(lms) {
   writeFileSync(p, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   did(`Wrapped ${changed.join(", ")} in .mcp.json for Windows - a bare npx entry starts nothing here, silently.`);
   did("Claude Code reads .mcp.json at session start, so restart it before you connect your school.");
+}
+
+// --- Step 2b - Google Drive, over rclone ---
+//
+// The page reads the agenda through the user's own Drive connector. The daily
+// RUN cannot: a scheduled script has no browser and no Claude session, so it
+// moves its bytes with the `rclone` CLI instead. That needs a package and ONE
+// consent click, and this step's whole job is to say which and print the two
+// commands.
+//
+// It never runs the consent command. `rclone config create` opens a browser and
+// blocks until a human clicks Allow, which is exactly the thing a wizard being
+// run with --yes in a terminal nobody is watching must not start. And it never
+// FAILS setup over any of this: an agenda that has not been published yet still
+// renders, still plans, and still works locally.
+//
+// `probe` is injected the way `checkMachine` takes it, so nothing here reaches
+// PATH in a test.
+function driveStep(cfg, env = {}) {
+  step("Drive over rclone");
+  // The suite may not spawn rclone, and a step whose output depends on whether
+  // the machine running the tests happens to have it installed is a flaky test
+  // waiting to happen. The words themselves are pinned by `rcloneSteps` in
+  // test/setup.test.mjs, where no probe is needed at all.
+  if (process.env.AGENDA_PREFLIGHT_NO_NETWORK) return did("skipped (AGENDA_PREFLIGHT_NO_NETWORK)");
+  const probeBin = env.probe ?? probe;
+  const found = cfg?.drive?.enabled === true ? probeBin("rclone") : null;
+  for (const line of rcloneSteps(env.platform ?? process.platform, cfg, found)) did(line);
 }
 
 // --- Step 3 - CLAUDE.md ---
@@ -272,7 +300,7 @@ async function scheduleStep(ask, cfg, opts) {
     return;
   }
   if (plan.kind === "windows") {
-    did("scripts\\install-tasks.cmd registers five per-user scheduled tasks:");
+    did("scripts\\install-tasks.cmd registers three per-user scheduled tasks:");
     plan.tasks.forEach((t) => did(`  ${t}`));
     plan.notes.forEach((n) => did(n));
     if (opts.interactive && !(await yesNo(ask, "Install them now?", "y"))) return did("Skipped. Run scripts\\install-tasks.cmd whenever you like.");
@@ -281,14 +309,16 @@ async function scheduleStep(ask, cfg, opts) {
     return did("Installed. It is idempotent - re-run it after you move this folder.");
   }
 
-  did(`${plan.doc} describes ${plan.kind}. Here is that, with this checkout's real path filled in:`);
+  const what = plan.kind === "launchd" ? "two plists" : "two cron lines";
+  did(`${plan.doc} describes ${plan.kind}: ${what} - the daily run, and the hourly auth lane.`);
+  did("Here they are, with this checkout's real path filled in:");
   for (const f of plan.files) {
     say("", `      --- ${f.path} ---`);
     say(f.content.split("\n").map((l) => `      ${l}`).join("\n").replace(/\s+$/, ""));
   }
   plan.notes.forEach((n) => did(n));
   const home = process.env.HOME ?? "";
-  if (plan.kind === "launchd" && home && opts.interactive && (await yesNo(ask, "Write those three plists and load them?", "n"))) {
+  if (plan.kind === "launchd" && home && opts.interactive && (await yesNo(ask, "Write those two plists and load them?", "n"))) {
     mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
     for (const f of plan.files) {
       const abs = join(home, "Library", "LaunchAgents", basename(f.path));
@@ -349,6 +379,7 @@ async function main() {
   try {
     const machine = checkMachine({ step, did }, { probe });
     const { cfg, answers } = await configStep(ask, opts);
+    driveStep(cfg);
     claudeMdStep(cfg, answers, opts);
     const verdict = doctorStep();
     if (opts.runDemo) demoStep();

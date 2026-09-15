@@ -23,6 +23,10 @@
  *   An LMS source is...     the user may legitimately have chosen demo-only
  *   Claude Code on PATH     needed for the runs, not for setup
  *   .mcp.json               the setup agent rewrites this for Windows at Step 5
+ *   Drive transport (rc...) rclone needs an install and ONE consent click in a
+ *                           browser. A scheduled script cannot click Allow, so
+ *                           this wizard can print the two commands and nothing
+ *                           more - docs/SETUP.md Step 9.2
  *
  * `<id> can run here` joins them by pattern: an enabled connector that is not
  * finished being connected is exactly what this wizard hands over.
@@ -32,6 +36,7 @@ export const EXPECTED_FAILS = Object.freeze([
   "An LMS source is enabled",
   "Claude Code on PATH",
   ".mcp.json",
+  "Drive transport (rclone)",
 ]);
 
 export const isExpectedFail = (name) => EXPECTED_FAILS.includes(name) || / can run here$/.test(String(name));
@@ -52,6 +57,64 @@ export function banner() {
     "  =======================",
     "  Five questions, then it runs the preflight and shows you a working demo.",
     "  It never asks for a password and never turns off a permission prompt.",
+  ];
+}
+
+// ---------------------------------------------------------------------------
+//  Google Drive, over rclone
+//
+//  The daily run publishes the page through the `rclone` CLI, not through a
+//  connector: a scheduled script has no browser and no Claude session to hold
+//  one. rclone needs two things this wizard cannot do - a package install, and
+//  ONE consent click on a Google sign-in page. So it prints both, checks
+//  nothing off on the user's behalf, and NEVER runs the consent command itself:
+//  `rclone config create` opens a browser and waits for a human, which is the
+//  one thing a setup run in a terminal somebody has walked away from must not
+//  start.
+// ---------------------------------------------------------------------------
+
+/** The exact install line per platform. Printed, never run. */
+export const RCLONE_INSTALL = Object.freeze({
+  win32: "winget install Rclone.Rclone",
+  darwin: "brew install rclone",
+  linux: "curl https://rclone.org/install.sh | sudo bash",
+});
+
+/** The one-time consent command for a remote named `remote`. Pure. */
+export const rcloneConsent = (remote) => `rclone config create ${remote} drive scope=drive`;
+
+/**
+ * What the wizard says about Drive, as lines. PURE - the caller does the
+ * probing and passes the answer in.
+ *
+ * @param {string} platform  a `process.platform` value
+ * @param {object} cfg       the loaded config, for `drive`
+ * @param {string|null} found  rclone's version line, or null if it is not on PATH
+ */
+export function rcloneSteps(platform, cfg, found) {
+  if (cfg?.drive?.enabled !== true) {
+    return [
+      "Google Drive is off in config.json (drive.enabled), so nothing here needs rclone.",
+      "Turn it on when you want the page to refresh itself on your phone - docs/connectors/google-drive.md.",
+    ];
+  }
+  const remote = cfg?.drive?.rcloneRemote || "agenda";
+  const install = RCLONE_INSTALL[platform] ?? "see https://rclone.org/install/";
+  const lines = found
+    ? [`rclone is installed: ${found}`]
+    : [
+        "rclone is not installed, and the daily run publishes your page through it.",
+        `  Install it:  ${install}`,
+      ];
+  return [
+    ...lines,
+    "One consent click connects it to your Google account, once, for good:",
+    `  ${rcloneConsent(remote)}`,
+    "  A browser opens on Google's own page, you click Allow, and that is the whole login.",
+    "Then check it:",
+    "  node src/drive-rclone.mjs status",
+    "Setup never runs the consent command itself - a scheduled script cannot click Allow,",
+    "and this is not a step it can do while you are away from the keyboard.",
   ];
 }
 
@@ -81,13 +144,17 @@ export function nextSteps(verdict, machine) {
     "         and the setup agent resumes at exactly this point.",
     "         -> docs/SETUP.md, Steps 6 and 7",
     "",
-    "      2. Your first real run:  node src/scrape.mjs  &&  node src/render.mjs",
+    "      2. Your first real run:  node scripts/run-daily.mjs --no-llm",
+    "         That does every scripted step with no model window and no cost, so you can",
+    "         read data/runlog.txt before anything is published. Then drop the flag.",
     "         -> docs/SETUP.md, Step 8",
     "",
-    "      3. Add the Google Drive connector to your Claude account.",
-    "         claude.ai -> Settings -> Connectors -> Google Drive. That lives on your",
-    "         Claude account, not in this folder, and no consent screen can appear",
-    "         until it exists. Nothing here can do it for you.",
+    "      3. Google Drive, which takes two separate permissions.",
+    "         a) The connector on your Claude account, so the PAGE can read your agenda:",
+    "            claude.ai -> Settings -> Connectors -> Google Drive. That lives on your",
+    "            Claude account, not in this folder, and nothing here can do it for you.",
+    "         b) One rclone consent click, so the DAILY RUN can write it. The exact",
+    "            command is in the \"Drive over rclone\" step further up this page.",
     "         -> docs/SETUP.md, Step 9.1",
     "",
     "      4. Publish the page, once, so your phone can read it.",

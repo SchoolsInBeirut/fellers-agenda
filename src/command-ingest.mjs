@@ -65,7 +65,7 @@
 //   attending {date, value}     Positive (or negative) evidence about a sitting,
 //                               written onto the matching data/study-plan.json
 //                               sittings[] entries. value:true is the signup
-//                               evidence runbooks/heavy-run.md section 4 demands before an
+//                               evidence runbooks/legacy/heavy-run.md section 4 demands before an
 //                               opt-in sitting is allowed to drive anything.
 //                               Refused when no sitting has that date - inventing
 //                               a sitting from a phone is exactly the phantom exam

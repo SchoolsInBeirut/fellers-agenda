@@ -55,7 +55,7 @@
  * and `render.mjs`, which gates on the same key, can never disagree with what is
  * on disk.
  *
- * EXIT CODES (`runbooks/heavy-run.md` keys off these)
+ * EXIT CODES (`src/pipeline.mjs` keys off these)
  *   0  ingested, or skipped because the route is off (the last line says which).
  *   3  the `--in` file is missing or unreadable. If the previous
  *      `gcal-items.json` still holds this feed younger than 48 hours those

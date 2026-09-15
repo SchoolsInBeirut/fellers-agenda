@@ -17,16 +17,16 @@
 // THE BUDGET, AND WHY IT IS THE INTERESTING PART OF THIS FILE
 //
 // Nothing here can reach the published page directly. The only channel is a
-// Google Doc, and the only thing that can write into it is an agent - which
-// means a language model reads `payload.b64.txt` and types its exact contents
-// as a tool argument. Every character is paid for twice, once to read and once
-// to emit. An uncompressed payload of this size costs more than a context
-// window has, which is not a performance problem: it is a run that cannot
-// finish.
+// Google Doc. In 1.x the only thing that could write into it was an agent - a
+// language model read `payload.b64.txt` and typed its exact contents as a tool
+// argument, paying for every character twice - and an uncompressed payload of
+// this size was a run that could not finish. Since 2.0.0 `src/drive-rclone.mjs`
+// carries the bytes over rclone; the budget stays because a small document is
+// what a phone reads fastest and what a Doc export mangles least.
 //
 // So the payload is gzipped before it is base64'd (about a 6x win on JSON with
-// keys this repetitive), guarded with a CRC32 so a truncated transcription
-// fails loudly instead of half-decoding, and slimmed one announced tier at a
+// keys this repetitive), guarded with a CRC32 so a truncated or reflowed
+// export fails loudly instead of half-decoding, and slimmed one announced tier at a
 // time until it fits `drive.maxEmitChars`. The run prints which tier it needed.
 // If even the last tier is too big, nothing is truncated: the oversize text is
 // written to a file, the run says so, and the page falls back to the complete
@@ -402,7 +402,7 @@ const schedule = Object.entries(cfg.schedule ?? {}).flatMap(([c, e]) =>
 // meetings[]: the user's own calendar, read INBOUND.
 //
 // `data/gcal-items.json` is written by `src/connectors/gcal-ingest.mjs`, which a
-// scheduled run executes before this script (runbooks/heavy-run.md). It is a
+// scheduled run executes before this script (src/pipeline.mjs, phase 1). It is a
 // side file like every other one here: absent or unreadable means an empty list
 // and nothing else. A calendar the user has not connected, or a connector
 // outage, must never cost them their agenda.

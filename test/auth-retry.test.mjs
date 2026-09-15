@@ -2,10 +2,10 @@
 //
 // The auth lane's failure modes are asymmetric and both are expensive:
 //
-//   too quiet - a session expires overnight, the one re-auth the heavy run is
-//               allowed dies, and nothing on the machine asks again until the
-//               evening run. Half a day of stale agenda with no lane whose job
-//               it was to notice.
+//   too quiet - a session expires overnight, the one re-auth the daily run is
+//               allowed dies, and nothing on the machine asks again until
+//               tomorrow's run. A whole day of stale agenda with no lane whose
+//               job it was to notice.
 //   too loud  - either two dozen pointless headless logins a day on a machine
 //               where nothing is wrong, or - far worse - repeated attempts
 //               against a password the school has already rejected, which locks
@@ -32,6 +32,7 @@ import {
   applyOutcome,
   authRetrySettings,
   heavyTasks,
+  HEAVY_LANES,
   laneTask,
   sessionFileFor,
   readSession,
@@ -88,7 +89,7 @@ const liveSession = (now, mins = 45) => ({
 });
 
 /** A session minted `agoMin` ago and long since expired - the ordinary resting
- *  state of a perfectly healthy machine between heavy runs. */
+ *  state of a perfectly healthy machine between daily runs. */
 const expiredSession = (now, agoMin = 120) => ({
   exists: true,
   createdAt: now.getTime() - agoMin * MIN,
@@ -233,14 +234,16 @@ test("authRetrySettings defaults every key independently", () => {
 });
 
 test("the lane's task names come from scheduler.taskPrefix and nowhere else", () => {
-  assert.deepEqual(heavyTasks(CFG), { morning: "Agenda Morning", evening: "Agenda Evening" });
+  assert.deepEqual(heavyTasks(CFG), { daily: "Agenda Daily" });
   assert.equal(laneTask(CFG), "Agenda AuthRetry");
   const renamed = { ...CFG, scheduler: { ...CFG.scheduler, taskPrefix: "Study" } };
   assert.equal(laneTask(renamed), "Study AuthRetry");
-  assert.deepEqual(heavyTasks(renamed), { morning: "Study Morning", evening: "Study Evening" });
-  // The light lane never scrapes and never authenticates, so it cannot collide
-  // with us and is deliberately not consulted.
-  assert.equal("sync" in heavyTasks(CFG), false);
+  assert.deepEqual(heavyTasks(renamed), { daily: "Study Daily" });
+  // 2.0.0 runs the pipeline once a day, so there is exactly one task that can
+  // be holding the browser profile. The two watchdog tasks never authenticate,
+  // so neither can collide with us and neither is consulted.
+  assert.deepEqual(Object.keys(heavyTasks(CFG)), [...HEAVY_LANES]);
+  for (const gone of ["morning", "evening", "sync"]) assert.equal(gone in heavyTasks(CFG), false);
 });
 
 test("sessionFileFor prefers a file that exists and opts out on an empty list", async () => {
@@ -379,9 +382,9 @@ test("a token expiring within the skew window is NOT proof", () => {
 });
 
 test("THE GOOD-DAY NO-OP: an expired session with no failure since is left alone", () => {
-  // An LMS token lives about an hour, so between the two heavy runs the session
-  // is expired almost all day on a machine where nothing is wrong. Firing here
-  // would mean two dozen pointless SSO logins a day.
+  // An LMS token lives about an hour, so between one daily run and the next the
+  // session is expired almost all day on a machine where nothing is wrong.
+  // Firing here would mean two dozen pointless SSO logins a day.
   const now = local(2, 14);
   const got = decide(now, { session: expiredSession(now, 300), authFailureAtMs: null });
   assert.equal(got.fire, false);
@@ -474,19 +477,22 @@ test("a wildly future lastAttemptAt is corruption, not a permanent gag", () => {
   assert.equal(decide(now, { session: NO_SESSION, state: { lastAttemptAt: zulu(new Date(now.getTime() + 10 * HOUR)) } }).fire, true);
 });
 
-test("a heavy run in progress defers - either lane, and only 'Running'", () => {
+test("a daily run in progress defers rather than racing it for the browser", () => {
   const now = local(2, 14);
-  for (const lane of ["morning", "evening"]) {
+  for (const lane of HEAVY_LANES) {
     const got = decide(now, { session: NO_SESSION, taskStates: { [lane]: "Running" } });
     assert.equal(got.fire, false);
     assert.equal(got.reason, `heavy-run-in-progress(${lane})`);
     assert.equal(got.detail.wouldFire, "no-session");
+    assert.equal(got.detail.busyLane, lane);
   }
   // A watchdog that goes quiet because a status query failed is worse than one
   // skipped hour, so `unknown` counts as not running.
   for (const state of ["Ready", "Disabled", "unknown", undefined]) {
-    assert.equal(decide(now, { session: NO_SESSION, taskStates: { morning: state, evening: state } }).fire, true, `${state} must not silence the lane`);
+    assert.equal(decide(now, { session: NO_SESSION, taskStates: { daily: state } }).fire, true, `${state} must not silence the lane`);
   }
+  // A retired 1.x task cannot suppress anything, whatever its status still says.
+  assert.equal(decide(now, { session: NO_SESSION, taskStates: { morning: "Running", evening: "Running" } }).fire, true);
 });
 
 // --- outcome folding ------------------------------------------------------
@@ -533,13 +539,13 @@ test("the AUTH line is one line and is INERT to stale-check's parser", () => {
   const line = authLine(now, { reason: "failure-after-success", token: "MFA-PENDING", code: 6, next: "retry-1h" });
   assert.equal(line.includes("\n"), false);
   assert.match(line, /^AUTH 2026-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z fire=reauth reason=\S+ result=\S+ exit=\d+ next=\S+$/);
-  // If stale-check ever counted this as a heavy run, a missed morning digest
-  // would silently mark itself delivered. This is the coupling that matters.
-  const got = parseRunlog([line, `${zulu(local(2, 7, 3))} run=scheduled items=80`].join("\n"));
-  assert.equal(got.heavy, 1);
+  // If stale-check ever counted this as a run, a missed digest would silently
+  // mark itself delivered. This is the coupling that matters.
+  const got = parseRunlog([line, `${zulu(local(2, 10, 35))} run=daily items=80`].join("\n"));
+  assert.equal(got.daily, 1);
   assert.equal(got.sync, 0);
   assert.equal(got.stale, 0);
-  assert.equal(zulu(got.lastHeavyAt), zulu(local(2, 7, 3)));
+  assert.equal(zulu(got.lastDailyAt), zulu(local(2, 10, 35)));
 });
 
 test("the tombstone explains itself and carries no secret", () => {
@@ -597,6 +603,62 @@ test("cliMain: a bad argument is the script being broken, exit 1", async () => {
   await withTempRepo(async (t) => {
     assert.equal(await cliMain(["--nope"], wire(t)), EXIT.broken);
   });
+});
+
+// --- a config.json that will not load -------------------------------------
+//
+// This lane and the stale-run watchdog are the only things that can report a
+// dead pipeline. A `config.json` with a trailing comma used to kill the run and
+// BOTH of them on the same line, leaving a Node stack in runlog-stdout.txt and
+// nothing anywhere a human would look.
+test("cliMain: a config that will not load is one line and exit 1, never a stack", async () => {
+  const bad = [
+    ["{ trailing, comma", "not valid JSON"],
+    [JSON.stringify({ namespace: "NOPE" }), "namespace"],
+    [JSON.stringify({ notifications: { emailDigest: "gmail" } }), "notifications.emailDigest"],
+  ];
+  for (const [body, names] of bad) {
+    await withTempRepo(async (t) => {
+      const now = local(2, 14);
+      const cfgPath = join(t.dir, "bad-config.json");
+      writeFileSync(cfgPath, body);
+      const reauth = fakeReauth(0);
+      const errs = [];
+
+      // `cfg` is deliberately NOT injected here: this is the one test that
+      // exercises the real loader through the real CLI.
+      const code = await cliMain(["--config", cfgPath], {
+        dir: t.dir,
+        dataDir: t.data,
+        home: t.home,
+        now,
+        runReauth: reauth.run,
+        queryTaskState: () => "Ready",
+        log: () => {},
+        logErr: (m) => errs.push(m),
+      });
+
+      assert.equal(code, EXIT.broken, `${names}: a config it cannot read means the lane is down`);
+      assert.equal(errs.length, 2, `${names}: exactly two lines, got ${JSON.stringify(errs)}`);
+      assert.ok(errs[0].startsWith("config: "), errs[0]);
+      assert.ok(errs[0].includes(names), `${names} must be named: ${errs[0]}`);
+      assert.equal(errs[0].includes("\n"), false, "one line, so Task Scheduler's log stays readable");
+      assert.ok(!/\bat \S+:\d+:\d+/.test(errs.join("\n")), `a stack reached the user:\n${errs.join("\n")}`);
+      assert.ok(!errs.join("\n").includes("ConfigError"), "the class name means nothing to a user");
+      assert.equal(errs[1], "fix: node scripts/validate-setup.mjs");
+
+      // No browser, no AUTH line - a login that never happened must not appear
+      // in the one record this lane keeps of what it did.
+      assert.equal(reauth.calls.length, 0);
+      assert.equal(existsSync(t.runlogFile), false);
+      assert.equal(existsSync(t.lockFile), false, "and nothing may look like a lockout");
+
+      // ...but the heartbeat IS stamped, so /agenda-doctor can see the lane ran
+      // and stopped rather than guessing it never fired at all.
+      assert.equal(readJson(t.stateFile).lastCheckAt, zulu(now));
+      assert.equal(readJson(t.stateFile).lastAttemptAt, null);
+    });
+  }
 });
 
 test("cliMain: a healthy machine writes only a heartbeat and never fires", async () => {
@@ -780,7 +842,7 @@ test("BAD CREDS: --clear-lock releases the lane, and a success clears it too", a
   });
 });
 
-test("cliMain: a running heavy lane defers instead of racing it for the browser", async () => {
+test("cliMain: a running daily task defers instead of racing it for the browser", async () => {
   await withTempRepo(async (t) => {
     const now = local(2, 14);
     const reauth = fakeReauth(0);
@@ -792,7 +854,7 @@ test("cliMain: a running heavy lane defers instead of racing it for the browser"
         runReauth: reauth.run,
         queryTaskState: (name) => {
           asked.push(name);
-          return name === "Agenda Morning" ? "Running" : "Ready";
+          return name === "Agenda Daily" ? "Running" : "Ready";
         },
       }),
     );
@@ -800,7 +862,7 @@ test("cliMain: a running heavy lane defers instead of racing it for the browser"
     assert.equal(reauth.calls.length, 0);
     assert.equal(existsSync(t.runlogFile), false);
     assert.equal(readJson(t.stateFile).lastCheckAt, zulu(now));
-    assert.ok(asked.includes("Agenda Morning"));
+    assert.ok(asked.includes("Agenda Daily"));
   });
 });
 
@@ -989,7 +1051,7 @@ test("the AUTH line carries mfa= only when a number was actually raised", () => 
   assert.equal(without.includes("mfa="), false);
   // Still one line, still inert to the run-log parser.
   const got = parseRunlog(withNum);
-  assert.equal(got.heavy + got.sync + got.stale, 0);
+  assert.equal(got.daily + got.sync + got.stale, 0);
 });
 
 test("cliMain relays the number exactly once and records it on the AUTH line", async () => {
