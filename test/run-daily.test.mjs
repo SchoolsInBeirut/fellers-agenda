@@ -333,9 +333,12 @@ test("--dry-run prints the five commands, the model window fully quoted, and run
     assert.ok(out[1].includes(`${dir}/work-order.json`), out[1]);
     assert.ok(out[1].includes("append --config"), out[1]);
     assert.ok(out[1].includes(path.join(dir, "no-such-config.json")), out[1]);
-    // exactly two double quotes on that line: the ones this file put round the
-    // whole prompt. Nothing inside it is quoted, so cmd.exe can parse it.
-    assert.equal((out[1].match(/"/g) ?? []).length, 6); // prompt + --tools + --allowedTools
+    // Nothing INSIDE an argument is double-quoted, so cmd.exe can parse the
+    // line: on win32 the only double quotes are the six this file puts round
+    // the prompt, --tools and --allowedTools; on POSIX arguments are
+    // single-quoted and there are none at all.
+    assert.equal((out[1].match(/"/g) ?? []).length, process.platform === "win32" ? 6 : 0);
+    assert.ok(!out[1].includes('\\"'), out[1]);
     assert.match(out[2], /--phase 2/);
     assert.match(out[3], /--finish/);
     assert.match(out[4], /--usage/);
