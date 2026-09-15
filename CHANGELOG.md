@@ -9,6 +9,288 @@ is the honest answer to "does this still work?" — not the release date.
 
 ---
 
+## [2.0.0] — 2026-09-15
+
+**Last verified working: 2026-09-15**
+
+Exercised on 2026-09-15 (Windows 11, Node v24.12.0): `npm test` (1,383 tests);
+`node scripts/demo.mjs`; one whole daily run with the real model window against
+the demo fixtures in a scratch data directory (`node scripts/run-daily.mjs
+--config fixtures/demo/config.demo.json --data <scratch>`): a 6.5 KB work order
+from 27 items, Claude Sonnet 5 at medium effort writing eight descriptions that
+`describe.mjs` accepted, skipping triage, writing a digest, running phase 2 and
+`--finish` itself and verifying the report - 11 turns, 8,812 output tokens, $0.41,
+with the launcher's own phase 2 and finish calls printing `already-done`; the
+launcher with `--no-llm` and `--dry-run`; every `pipeline.mjs` command including
+the idempotent repeats; both apply gates refusing and accepting; `drive-rclone.mjs
+status` (read-only) against a real remote and `publish --dry-run`; one mirror
+publish over rclone to a real Google Drive during development, verified by
+read-back and then removed; `stale-check.mjs --dry-run`; `gcal-sync.mjs` against
+the bundled ICS fixture and `--validate`. **NOT exercised:** a real LMS login
+(the demo config has no source; phase 1 accepted the bundled snapshot under the
+data-health rule); registering the Windows tasks, the plists or the crontab; a
+payload publish from this template and the page reading an rclone-written
+document; the Outlook digest sender; a real feed address over the network;
+`docs/PHONE.md` live. The README's "Last verified working" section has the same
+list with more detail.
+
+**Almost all of this release is new code.** The launcher, the two-phase pipeline,
+the rclone transport, the model window's flag set, the three validating apply
+CLIs and the feed-based inbound calendar were written for 2.0.0. Where a claim
+below has not been exercised end to end, the paragraph above says so rather than
+implying otherwise. The design was proven on the author's own installation before
+being ported here; that is evidence, not the same thing as this template working
+on your machine.
+
+Version 1.x ran a language model ten times a day and spent most of it retyping
+bytes. Measured across 115 headless transcripts over a fortnight: about **560,000
+output tokens and 18 million cache-read tokens a day**, of which **84% was the
+model acting as a copy machine** — a 19,000-character base64 payload typed into a
+document, read back to verify, and a 15,000-character calendar dump that returned
+zero events every run. The weekly usage limit tripped and the agenda went dark
+for 35 hours, which is the one failure mode indistinguishable from "nothing is
+due". 2.0.0 runs **once a day, for one model window of 8–13 turns**, and the page
+keeps updating when the model is unavailable. `docs/design-notes/daily-run.md`
+has the whole argument.
+
+### Breaking — scheduler keys
+
+- **`scheduler.morningAt`, `scheduler.eveningAt`, `scheduler.syncWindow` and
+  `scheduler.syncGapHours` are gone**, replaced by **`scheduler.dailyAt`**
+  (default `10:30`) and **`scheduler.quietFrom`** (default `23:00`).
+  `scheduler.quietUntil` stays, now defaulting to `10:23`.
+- **A config that still carries the old keys loads.** It gets **one** warning
+  naming `scheduler.dailyAt` and is otherwise accepted, because people upgrade
+  mid-term and a config that refuses to load is an agenda that stops. Delete them
+  when convenient.
+
+### Breaking — the task set
+
+- **Five scheduled tasks became three.** `<prefix> Morning`, `<prefix> Evening`
+  and `<prefix> Sync` are retired; `<prefix> Daily` replaces all three.
+  `<prefix> StaleCheck` and `<prefix> AuthRetry` are unchanged.
+- **The installer does not delete them for you.** `scripts\install-tasks.cmd`
+  prints one notice per legacy task it finds and leaves it registered;
+  `scripts\install-tasks.cmd /remove-legacy` deletes exactly those three. An
+  installer that removes a task it was not asked about is an installer nobody
+  should run twice.
+- macOS is now two `launchd` agents — `com.agenda.daily.plist` and
+  `com.agenda.auth.plist` — and Linux is two crontab lines. Neither carries an
+  `--allowedTools` list any more: the launcher is a plain Node script and it
+  starts the model window itself.
+
+### Breaking — the Drive transport
+
+- **Drive is now written by `rclone`, a command-line program you install once.**
+  `src/drive-rclone.mjs` shells out to it. The payload no longer passes through a
+  language model, which is where 84% of the old cost went. Setup is one install
+  line and one browser consent click: `rclone config create agenda drive
+  scope=drive`, then `node src/drive-rclone.mjs status`.
+- **`drive.rcloneRemote` and `drive.rcloneExe` are new config keys.**
+- **Drive now has two halves that are authorised separately**: `rclone` for the
+  pipeline's writes, and the Google Drive connector on your Claude account for
+  the page's reads. Skipping either fails in a way that looks like the other, so
+  `docs/connectors/google-drive.md`, `docs/SETUP.md` step 9 and the onboarding
+  agent all say it in those words.
+- **Every write updates the document in place and is verified by reading it
+  back.** The old create-then-trash cycle is gone, and with it the duplicate
+  documents a run that died between the two halves used to leave. A publish whose
+  read-back does not match is restored from `data/payload.last-good.txt`
+  (`drive=FAILED(verify;restored-last-good)`), so the page shows a whole week
+  rather than half of one. **The token only claims a repair that happened:** when
+  the restore upload fails too, it is `drive=FAILED(verify;restore-failed)` and
+  the run log says plainly that the bad document is still live.
+- **Nothing is trashed.** A consumed completions or commands document is *moved*
+  to a new `<ns>-consumed` folder and purged after seven days, so a mark eaten by
+  mistake is recoverable for a week. Duplicates left by 1.x are tidied into the
+  same folder on the first publish (`;deduped=N`).
+- **The published page did not change.** It still finds `<ns>-data` by title,
+  newest `modifiedTime`, and reads `AGD2.` — an in-place update is exactly what
+  it already expected. You do not republish anything.
+
+### Breaking — the retired runbooks and launchers
+
+- `runbooks/heavy-run.md` and `runbooks/sync-run.md` moved to
+  **`runbooks/legacy/`**, each with a banner saying so. Nothing reads them. They
+  are kept because the mail-triage, description and standards-plan rules that
+  `runbooks/daily-agent.md` states in condensed form were reasoned out there,
+  with the arguments — cite them for *why*, never for *what happens now*.
+- **`scripts/run-heavy.cmd` and `scripts/run-sync.cmd` are deleted.**
+  `scripts/run-daily.cmd` replaces both.
+- Every reference in `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/` and
+  `.claude/` now points at `runbooks/daily-agent.md` or
+  `docs/design-notes/daily-run.md`.
+
+### Breaking — `notifications.emailDigest`
+
+- The values are now **`"off"`** and **`"outlook"`**. With one run a day there is
+  at most one digest a day, so the `"morning-only"` / `"every-run"` distinction
+  had nothing left to distinguish.
+- **The two 1.x values still load.** They are mapped to `"outlook"` with one
+  warning rather than refused, because a config that loads with a warning beats
+  an agenda that goes dark mid-term on a key nobody has read about yet. Any
+  *other* value is a `ConfigError` naming the key.
+- `"outlook"` is Windows-only; everywhere else a run logs
+  `digest=SKIPPED(no-mail-sink)`.
+
+### Breaking — the inbound calendar's daily route
+
+- **A scheduled run no longer calls a calendar connector**, because the model
+  window is launched with no connectors at all. The daily route is now **feed
+  URLs**: `src/connectors/gcal-sync.mjs` reads `data/gcal-feeds.json`, fetches
+  each calendar's private iCal address over HTTPS, and parses RFC 5545 including
+  repeating events.
+- **A feed URL is a bearer secret** — it reads a whole calendar with no sign-in.
+  It never appears in argv, a log, an error, the payload or the state mirror, and
+  `data/gcal-feeds.json` is excluded from the mirror by name. If one leaks, reset
+  the private address on the calendar's side.
+- `src/connectors/gcal-ingest.mjs` and the saved-connector-result route still
+  exist, **for interactive sessions only**.
+
+### Added — the daily run
+
+- **`scripts/run-daily.mjs`** (and `scripts/run-daily.cmd`), the launcher: phase 1
+  → the model window → phase 2 → `--finish` → `--usage`. Pure Node, zero
+  dependencies, cross-platform. `--dry-run` prints the five commands fully quoted
+  and runs none of them; `--no-llm` skips the model window.
+- **`src/pipeline.mjs`**, with `pipeline-steps.mjs` and `pipeline-workorder.mjs`.
+  Phase 1 fetches and ingests and writes `data/work-order.json`; phase 2 renders,
+  publishes, mirrors, writes the calendar, sends the digest and arms the
+  dead-man's switch; `--finish` writes the run log line; `--usage` writes the
+  ledger. Every step produces one token and no step is fatal on its own.
+- **`runbooks/daily-agent.md`** — what the model window does, in under 200 lines
+  of ASCII: read the work order, triage, describe, maybe write the digest, run
+  phase 2, verify the report, write `data/llm-notes.json`, stop.
+- **The model window is narrow on purpose.** Four built-in tools
+  (`Bash`, `Read`, `Write`, `PushNotification`), `--strict-mcp-config` with no
+  MCP servers, and `--setting-sources project`. A headless session with every
+  connector loaded starts at roughly 37,000–40,000 tokens of context floor; with
+  four tools it is about 17,000, paid on every turn. The window therefore
+  *cannot* scrape, authenticate or touch Drive — a property of how it is
+  launched, not a promise in a runbook.
+- **A model outage is not an agenda outage.** `claude` missing, exiting non-zero,
+  or running past `llm.timeoutMinutes` is not a run failure: the launcher
+  completes phases 2 and 3 itself, the page updates, and the run log carries
+  `llm=absent(<reason>)`.
+- **`llm` config block** — `enabled`, `model`, `effort`, `maxTurns`,
+  `maxBudgetUsd`, `timeoutMinutes`. `maxTurns` and `maxBudgetUsd` are hard stops.
+  **A run that hits one is a run to look at, not a cap to widen.**
+- **`data/llm-usage.jsonl`** — one record per run with turns, output tokens and
+  cost. `/agenda-doctor` summarises the last seven, with the rule that a run over
+  15,000 output tokens or 20 turns wants a human. The author's first live run of
+  this design: 13 turns, 7,567 output tokens, about $0.30.
+
+### Added — the pieces the model hands work to
+
+- **`src/drive-rclone.mjs`** — `publish` / `pull` / `consume` / `purge` /
+  `status`, with an injected runner so every path is unit-tested against a fake.
+- **`src/mail-triage.mjs`** and `src/mail-triage-rules.mjs` — validate and apply
+  the model's triage file. All or nothing: exit 5 leaves the previous state
+  exactly as it was.
+- **`src/describe.mjs`** — the same for descriptions, checked against the gap
+  list so a description can never be attached to a key the pipeline did not ask
+  about.
+- **`src/send-digest.mjs`** — sends `data/digest.md` through the mail sink. The
+  model writes a file; it never sends mail.
+- **`src/connectors/gcal-sync.mjs`**, with `src/lib/ics-parse.mjs` and
+  `src/lib/ics-rrule.mjs` — RFC 5545 parsing and RRULE expansion, fetched through
+  an injected fetcher so the tests touch no network.
+  `fixtures/gcal/feeds.example.json` is the file's shape.
+- **`npm run daily`** in `package.json`, and three new entries in
+  `.claude/settings.json`'s allow list (`pipeline.mjs --phase 1`,
+  `drive-rclone.mjs status`, `run-daily.mjs --dry-run`).
+
+### Added — documentation
+
+- **`docs/design-notes/daily-run.md`** — the measured numbers above, the shape of
+  a run, why rclone, why the model gets four tools, the token ledger and what to
+  do when it climbs, and the rclone caveat below.
+- **The rclone caveat, written down before it bites.** rclone ships with a shared
+  Google client id that **is being retired during 2026** and prints a notice about
+  it on every call (which `drive-rclone.mjs` filters out of its error reporting,
+  so a routine notice never becomes a fake failure). When publishes start failing
+  with authentication errors, make your own client id per rclone.org/drive and
+  `rclone config update <remote> client_id=… client_secret=…`. Nothing in this
+  repository changes.
+- **README gains a "What it costs" section** with the 1.x-versus-2.0.0 table and
+  where the ledger lives.
+- `docs/SCHEDULING.md`, `docs/ARCHITECTURE.md` (including the diagram),
+  `docs/CONFIG.md`, `docs/SETUP.md` steps 8–9, `docs/TROUBLESHOOTING.md` and
+  `docs/connectors/google-drive.md` rewritten for the daily run and the new
+  transport. `docs/connectors/calendar-feeds.md` is new.
+
+### Changed
+
+- **`src/stale-check.mjs` watches one boundary**, `scheduler.dailyAt`, instead of
+  three, and rescues by starting the `<prefix> Daily` task. Its quiet window is
+  `scheduler.quietUntil` → `scheduler.quietFrom`, because a rescued run can send
+  mail and raise a push and one at 03:00 is worse than a missed day. A legacy
+  `SYNC ` line is still parsed — as noise, never as a run.
+- **`src/auth-retry.mjs`** watches the one daily task. One run a day means one
+  re-auth attempt a day, which makes this lane matter more than it did, not less.
+- **`docs/SCHEDULING.md`'s Cowork section is honest rather than clever.** The
+  publish needs `rclone` on the machine that runs it and a schedule needs a local
+  scheduler, so cloud-only is no longer documented as a way to *host* the agenda.
+  It is documented as a way to run `/agenda-now` by hand with a Canvas token,
+  with nothing scheduled.
+- **`.claude/agents/agenda-runner.md` and `.claude/commands/agenda-now.md`** now
+  grant exactly what the scheduled window grants — `Bash`, `Read`, `Write`,
+  `PushNotification`, plus `Task` for the command — and **no connector tools at
+  all.** `/agenda-now light` is answered with one sentence saying the light run
+  is retired, and then runs the full one.
+- **`scripts/validate-setup.mjs`** gains a "Drive transport (rclone)" check —
+  `(off)` when Drive is disabled, a FAIL with the install line when rclone is
+  missing, a FAIL with the consent command when the remote is not authorised —
+  and a check that `llm.model` is set. Its layout check now wants
+  `runbooks/daily-agent.md`, `scripts/run-daily.mjs` and `src/pipeline.mjs`.
+- **`scripts/setup.mjs`** gains a "Drive over rclone" step: it looks for the
+  program, prints either the install line for your platform or the one-time
+  consent command, and **never runs the consent command** — a scheduled script
+  cannot click Allow. It never fails setup over it.
+- **The payload is still compressed, for different reasons.** The model no longer
+  types it, so the token argument is dead; a 6,700-character document is still a
+  faster page refresh than a 65,000-character one, and the CRC-32 is still a real
+  integrity check on a document a human can open and type into.
+- **The dead-man's switch is armed 30 hours out** rather than 26. One run a day
+  needs a window wider than a day plus a grace period.
+
+### Removed
+
+- `scripts/run-heavy.cmd`, `scripts/run-sync.cmd`.
+- `scheduler.morningAt`, `scheduler.eveningAt`, `scheduler.syncWindow`,
+  `scheduler.syncGapHours` from the defaults and `config.example.json`.
+- `notifications.emailDigest` values `"morning-only"` and `"every-run"`.
+- The connector-based inbound calendar step from the scheduled run. The script
+  stays for interactive use.
+
+### Fixed
+
+- **A scrape could finish and then hang forever, leaking a server process every
+  run.** `src/lib/mcp-client.mjs`'s `close()` now kills the server's whole process
+  tree on Windows (`taskkill /T /F /PID`) before `child.kill()`, releases stdio,
+  and is idempotent and never throws. This was the root cause of runs that wrote
+  `data/latest.json` and then sat until their time limit, and of one orphaned
+  server tree accumulating per run.
+- **A hung scrape no longer wastes the day.** When `data/latest.json` was written
+  during this run, carries `items[]` and has an empty `errors[]`, phase 1 accepts
+  it even if the process never exited cleanly:
+  `scrape=ok(<n>-items;exit-not-observed)`.
+- **`AUTH ` lines are protected when the run log is trimmed.** 1.x protected only
+  `STALE `. Both are now exempt from the 500-line cap, because they are the only
+  record either watchdog keeps of what it did.
+- **A `config.json` that will not load is no longer a stack trace and a silent
+  dead day.** A trailing comma, a quoted number or a value outside its allowed
+  set used to take down the launcher, the pipeline **and both watchdogs** on the
+  same line — so nothing ran, nothing was logged, and nothing was left alive to
+  notice. The launcher and the pipeline now exit **3** with one line naming the
+  key; `stale-check.mjs` and `auth-retry.mjs` exit 1 the same way and keep
+  reporting. `node scripts/validate-setup.mjs` names the key and the fix.
+- **Duplicate `<ns>-data` documents from the 1.x era are tidied**, rather than
+  accumulating forever: everything but the newest of a title is moved to
+  `<ns>-consumed` on the first publish.
+
+---
+
 ## [1.3.0] — 2026-09-04
 
 **Last verified working: 2026-09-04** (Windows 11, Node v24.12.0: the full
